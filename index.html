@@ -552,6 +552,24 @@ select.input { appearance: none; }
     <div style="height:20px"></div>
   </div>
 
+  <!-- =================== ESERCIZI =================== -->
+  <div id="page-esercizi" class="page">
+    <div class="page-header">
+      <div class="page-title">ESERCIZI</div>
+      <div class="page-subtitle">Il tuo catalogo personalizzato</div>
+    </div>
+    <div style="padding:0 16px;margin-bottom:12px">
+      <button class="btn btn-primary btn-full" onclick="openCreateExercise()">+ Nuovo esercizio</button>
+    </div>
+    <div class="search-bar">
+      <span>🔍</span>
+      <input type="text" placeholder="Cerca esercizio..." id="ex-lib-search" oninput="renderEserciziPage()">
+    </div>
+    <div id="ex-muscle-filter-chips" class="chip-row" style="padding:0 16px;margin-bottom:12px;overflow-x:auto;flex-wrap:nowrap"></div>
+    <div id="esercizi-list"><!-- filled by JS --></div>
+    <div style="height:20px"></div>
+  </div>
+
   <!-- =================== NAVBAR =================== -->
   <nav class="navbar">
     <div class="nav-item active" onclick="showPage('home')" id="nav-home">
@@ -566,13 +584,13 @@ select.input { appearance: none; }
       <div class="nav-icon">📋</div>
       <div class="nav-label">TEMPLATE</div>
     </div>
+    <div class="nav-item" onclick="showPage('esercizi')" id="nav-esercizi">
+      <div class="nav-icon">💪</div>
+      <div class="nav-label">ESERCIZI</div>
+    </div>
     <div class="nav-item" onclick="showPage('storico')" id="nav-storico">
       <div class="nav-icon">📈</div>
       <div class="nav-label">STORICO</div>
-    </div>
-    <div class="nav-item" onclick="showPage('profilo')" id="nav-profilo">
-      <div class="nav-icon">👤</div>
-      <div class="nav-label">PROFILO</div>
     </div>
   </nav>
 </div>
@@ -730,6 +748,61 @@ select.input { appearance: none; }
   </div>
 </div>
 
+<!-- Modal: Crea/Modifica Esercizio -->
+<div class="modal-overlay" id="modal-exercise-editor">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="exercise-editor-title">Nuovo Esercizio</div>
+    <input type="hidden" id="editor-exercise-id">
+
+    <div class="input-group">
+      <label class="input-label">Nome esercizio *</label>
+      <input class="input" id="editor-ex-name" placeholder="es. Panca con manubri...">
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Gruppo muscolare *</label>
+      <select class="input" id="editor-ex-muscle">
+        <option value="">Seleziona...</option>
+        <option>Petto</option><option>Schiena</option><option>Spalle</option>
+        <option>Bicipiti</option><option>Tricipiti</option><option>Gambe</option><option>Addome</option>
+        <option>Cardio</option><option>Altro</option>
+      </select>
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Categoria</label>
+      <div class="chip-row" id="editor-category-chips">
+        <div class="chip selected" data-val="Compound" onclick="selectEditorCategory('Compound',this)">Compound</div>
+        <div class="chip" data-val="Isolation" onclick="selectEditorCategory('Isolation',this)">Isolation</div>
+        <div class="chip" data-val="Cardio" onclick="selectEditorCategory('Cardio',this)">Cardio</div>
+        <div class="chip" data-val="Altro" onclick="selectEditorCategory('Altro',this)">Altro</div>
+      </div>
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Icona (emoji)</label>
+      <div class="chip-row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px" id="editor-icon-chips">
+        ${['🏋️','💪','🔥','⚙️','🎯','🔄','⬆️','⬇️','🦵','🦅','🤸','🏔️','👑','🔨','💀','🦶','📏','🎡','🔒','🚣','🤷','⚓','🌙','🦋','📐','🚶'].map(ic =>
+          `<div class="chip" data-val="${ic}" onclick="selectEditorIcon('${ic}',this)" style="font-size:20px;padding:6px 10px">${ic}</div>`
+        ).join('')}
+      </div>
+      <input class="input" id="editor-ex-icon" placeholder="Oppure digita un'emoji personalizzata..." style="margin-top:4px">
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Note / descrizione</label>
+      <textarea class="input" id="editor-ex-notes" placeholder="Indicazioni tecniche, varianti..."></textarea>
+    </div>
+
+    <div class="divider"></div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-exercise-editor')">Annulla</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveExerciseEditor()">Salva esercizio</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -853,6 +926,7 @@ function renderPage(page) {
   if (page === 'template') renderTemplates();
   if (page === 'storico') renderStorico();
   if (page === 'profilo') renderProfilo();
+  if (page === 'esercizi') renderEserciziPage();
 }
 
 // ============================================================
@@ -1770,6 +1844,170 @@ function formatDuration(sec) {
   const m = Math.floor(sec / 60);
   if (m < 60) return m + 'min';
   return Math.floor(m/60) + 'h ' + (m%60) + 'min';
+}
+
+// ============================================================
+// ESERCIZI LIBRARY (built-in + custom)
+// ============================================================
+
+function allExercises() {
+  // Merge built-in with user custom exercises (stored in state)
+  return [...EXERCISE_DB, ...(state.customExercises || [])];
+}
+
+let exLibMuscleFilter = '';
+let editorCategory = 'Compound';
+let editorIcon = '🏋️';
+
+function renderEserciziPage() {
+  // Muscle filter chips
+  const muscles = ['Tutti', ...MUSCLES, 'Cardio', 'Altro'];
+  document.getElementById('ex-muscle-filter-chips').innerHTML = muscles.map(m => `
+    <div class="chip ${(m==='Tutti'&&!exLibMuscleFilter)||(m===exLibMuscleFilter)?'selected':''}"
+         onclick="setExLibMuscle('${m==='Tutti'?'':m}',this)"
+         style="white-space:nowrap">${m}</div>
+  `).join('');
+
+  const q = (document.getElementById('ex-lib-search')?.value || '').toLowerCase();
+  const all = allExercises();
+  const filtered = all.filter(e => {
+    const mMatch = !exLibMuscleFilter || e.muscle === exLibMuscleFilter;
+    const qMatch = !q || e.name.toLowerCase().includes(q) || e.muscle.toLowerCase().includes(q);
+    return mMatch && qMatch;
+  });
+
+  // Group by muscle
+  const grouped = {};
+  filtered.forEach(e => {
+    if (!grouped[e.muscle]) grouped[e.muscle] = [];
+    grouped[e.muscle].push(e);
+  });
+
+  if (filtered.length === 0) {
+    document.getElementById('esercizi-list').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Nessun risultato</div>
+        <div class="empty-desc">Prova un'altra ricerca o crea un nuovo esercizio</div>
+      </div>`;
+    return;
+  }
+
+  document.getElementById('esercizi-list').innerHTML = Object.entries(grouped).map(([muscle, exs]) => `
+    <div style="padding:0 16px">
+      <div style="font-size:11px;color:${MUSCLE_COLORS[muscle]||'var(--accent)'};font-weight:700;letter-spacing:1px;text-transform:uppercase;margin:12px 0 6px">${muscle}</div>
+      ${exs.map(e => {
+        const isCustom = (state.customExercises||[]).some(c => c.id === e.id);
+        return `
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
+          <div style="font-size:24px;min-width:36px;text-align:center">${e.icon}</div>
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:15px">${e.name} ${isCustom?'<span style="font-size:10px;color:var(--accent);font-weight:600;background:rgba(232,255,71,0.1);padding:2px 7px;border-radius:10px;border:1px solid rgba(232,255,71,0.3)">CUSTOM</span>':''}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">${e.category}${e.notes?' · '+e.notes.substring(0,40):''}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-secondary btn-icon" onclick="openEditExercise('${e.id}')" style="font-size:14px">✏️</button>
+            ${isCustom ? `<button class="btn btn-sm btn-danger btn-icon" onclick="deleteCustomExercise('${e.id}')" style="font-size:14px">🗑</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('');
+}
+
+function setExLibMuscle(muscle, el) {
+  exLibMuscleFilter = muscle;
+  document.querySelectorAll('#ex-muscle-filter-chips .chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  renderEserciziPage();
+}
+
+function openCreateExercise() {
+  document.getElementById('exercise-editor-title').textContent = 'Nuovo Esercizio';
+  document.getElementById('editor-exercise-id').value = '';
+  document.getElementById('editor-ex-name').value = '';
+  document.getElementById('editor-ex-muscle').value = '';
+  document.getElementById('editor-ex-notes').value = '';
+  document.getElementById('editor-ex-icon').value = '';
+  editorCategory = 'Compound';
+  editorIcon = '🏋️';
+  document.querySelectorAll('#editor-category-chips .chip').forEach(c => c.classList.toggle('selected', c.dataset.val === 'Compound'));
+  document.querySelectorAll('#editor-icon-chips .chip').forEach(c => { c.classList.toggle('selected', c.dataset.val === '🏋️'); });
+  openModal('modal-exercise-editor');
+}
+
+function openEditExercise(id) {
+  const all = allExercises();
+  const e = all.find(x => x.id === id);
+  if (!e) return;
+  document.getElementById('exercise-editor-title').textContent = 'Modifica Esercizio';
+  document.getElementById('editor-exercise-id').value = id;
+  document.getElementById('editor-ex-name').value = e.name;
+  document.getElementById('editor-ex-muscle').value = e.muscle;
+  document.getElementById('editor-ex-notes').value = e.notes || '';
+  document.getElementById('editor-ex-icon').value = '';
+  editorCategory = e.category || 'Compound';
+  editorIcon = e.icon || '🏋️';
+  document.querySelectorAll('#editor-category-chips .chip').forEach(c => c.classList.toggle('selected', c.dataset.val === editorCategory));
+  document.querySelectorAll('#editor-icon-chips .chip').forEach(c => { c.classList.toggle('selected', c.dataset.val === editorIcon); });
+  openModal('modal-exercise-editor');
+}
+
+function selectEditorCategory(val, el) {
+  editorCategory = val;
+  document.querySelectorAll('#editor-category-chips .chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+function selectEditorIcon(val, el) {
+  editorIcon = val;
+  document.getElementById('editor-ex-icon').value = '';
+  document.querySelectorAll('#editor-icon-chips .chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+function saveExerciseEditor() {
+  const name = document.getElementById('editor-ex-name').value.trim();
+  const muscle = document.getElementById('editor-ex-muscle').value;
+  const customIconInput = document.getElementById('editor-ex-icon').value.trim();
+  const icon = customIconInput || editorIcon || '💪';
+  const notes = document.getElementById('editor-ex-notes').value.trim();
+  const editingId = document.getElementById('editor-exercise-id').value;
+
+  if (!name) { showToast('Inserisci il nome dell\'esercizio'); return; }
+  if (!muscle) { showToast('Seleziona il gruppo muscolare'); return; }
+
+  if (!state.customExercises) state.customExercises = [];
+
+  if (editingId) {
+    // Check if it's a built-in exercise — if so, save as override in custom
+    const isBuiltIn = EXERCISE_DB.some(e => e.id === editingId);
+    const customIdx = state.customExercises.findIndex(e => e.id === editingId);
+    const updated = { id: editingId, name, muscle, icon, category: editorCategory, notes, custom: true };
+    if (customIdx >= 0) {
+      state.customExercises[customIdx] = updated;
+    } else {
+      // Override built-in by storing in custom with same id
+      state.customExercises.push(updated);
+    }
+  } else {
+    // New custom exercise
+    const newId = 'custom_' + Date.now();
+    state.customExercises.push({ id: newId, name, muscle, icon, category: editorCategory, notes, custom: true });
+  }
+
+  saveState();
+  closeModal('modal-exercise-editor');
+  renderEserciziPage();
+  showToast(editingId ? 'Esercizio aggiornato ✓' : 'Esercizio creato ✓');
+}
+
+function deleteCustomExercise(id) {
+  if (!confirm('Eliminare questo esercizio personalizzato?')) return;
+  state.customExercises = (state.customExercises || []).filter(e => e.id !== id);
+  saveState();
+  renderEserciziPage();
+  showToast('Esercizio eliminato');
 }
 
 // ============================================================
