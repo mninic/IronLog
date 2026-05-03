@@ -266,14 +266,17 @@ select.input{appearance:none}
     <div class="page-subtitle">I tuoi progressi</div>
   </div>
   <div class="card">
-    <div class="card-title">Volume settimanale (kg)</div>
-    <div class="chart-container"><canvas id="chart-volume"></canvas></div>
+    <div class="card-title">Volume settimanale (tutto lo storico)</div>
+    <div class="chart-container" style="overflow-x:auto"><canvas id="chart-volume"></canvas></div>
   </div>
   <div class="card">
     <div class="card-title">Distribuzione muscolare (serie totali)</div>
     <div id="muscle-distribution"></div>
   </div>
-  <div class="section-header"><div class="section-title">Sessioni</div></div>
+  <div class="section-header">
+    <div class="section-title">Sessioni</div>
+    <div class="section-link" onclick="openRetroModal()">+ Retroattivo</div>
+  </div>
   <div id="history-list"></div>
   <div style="height:20px"></div>
 </div>
@@ -500,6 +503,51 @@ select.input{appearance:none}
   </div>
 </div>
 
+<!-- MODAL: Retroactive Session -->
+<div class="modal-overlay" id="modal-retro">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Sessione retroattiva</div>
+    <div class="input-group">
+      <label class="input-label">Nome sessione</label>
+      <input class="input" id="retro-name" placeholder="es. Push A, Leg Day...">
+    </div>
+    <div class="input-group">
+      <label class="input-label">Data</label>
+      <input type="date" class="input" id="retro-date">
+    </div>
+    <div class="input-group">
+      <label class="input-label">Durata (minuti)</label>
+      <input type="number" class="input" id="retro-duration" placeholder="es. 60" min="0">
+    </div>
+    <div class="divider"></div>
+    <div class="flex justify-between items-center mb-12">
+      <div class="font-bold">Esercizi <span id="retro-ex-count" style="color:var(--accent)">0</span></div>
+      <button class="btn btn-sm btn-secondary" onclick="addRetroExercise()">+ Aggiungi</button>
+    </div>
+    <div id="retro-exercise-list"></div>
+    <div class="divider"></div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-retro')">Annulla</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveRetroSession()">Salva sessione</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Retro Exercise Picker -->
+<div class="modal-overlay" id="modal-retro-ex-picker">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Scegli esercizio</div>
+    <div class="search-bar" style="margin:0 0 12px">
+      <span style="color:var(--text3)">🔍</span>
+      <input type="text" placeholder="Cerca esercizio..." id="retro-ex-search" oninput="filterRetroExercises()">
+    </div>
+    <div class="chip-row mb-12" id="retro-muscle-filter-chips" style="margin-bottom:12px;overflow-x:auto;flex-wrap:nowrap"></div>
+    <div id="retro-exercise-picker-list"></div>
+  </div>
+</div>
+
 <!-- MODAL: In-session increment -->
 <div class="modal-overlay" id="modal-session-increment">
   <div class="modal">
@@ -536,6 +584,34 @@ select.input{appearance:none}
     <div class="flex gap-8">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-session-increment')">Annulla</button>
       <button class="btn btn-primary" style="flex:2" onclick="saveSI()">Applica</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Confirm Finish -->
+<div class="modal-overlay" id="modal-confirm-finish">
+  <div class="modal" style="text-align:center">
+    <div class="modal-handle"></div>
+    <div style="font-size:48px;margin-bottom:12px">🏁</div>
+    <div class="modal-title" style="text-align:center">Terminare?</div>
+    <div style="color:var(--text2);font-size:14px;margin-bottom:24px">La sessione verrà salvata nello storico</div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-confirm-finish')">Continua</button>
+      <button class="btn btn-primary" style="flex:1" onclick="confirmFinishSession()">Fine</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Confirm Delete -->
+<div class="modal-overlay" id="modal-confirm-delete">
+  <div class="modal" style="text-align:center">
+    <div class="modal-handle"></div>
+    <div style="font-size:48px;margin-bottom:12px">🗑️</div>
+    <div class="modal-title" style="text-align:center">Eliminare sessione?</div>
+    <div style="color:var(--text2);font-size:14px;margin-bottom:24px">Questa azione non è reversibile</div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-confirm-delete')">Annulla</button>
+      <button class="btn btn-danger" style="flex:1" onclick="confirmDeleteSession()">Elimina</button>
     </div>
   </div>
 </div>
@@ -1174,7 +1250,12 @@ function skipRest() {
 
 function finishSession() {
   if (!state.activeSession) return;
-  if (!confirm('Terminare la sessione?')) return;
+  openModal('modal-confirm-finish');
+}
+
+function confirmFinishSession() {
+  closeModal('modal-confirm-finish');
+  if (!state.activeSession) return;
   clearInterval(sessionTimerInterval);
   skipRest();
   var duration = Math.floor((Date.now()-state.activeSession.startTime)/1000);
@@ -1210,11 +1291,16 @@ function finishSession() {
 var chartVolume=null, chartExercise=null;
 
 function renderStorico() {
-  var w8=getLast8WeeksVolume();
+  var wAll=getAllWeeksVolume();
   if (chartVolume) chartVolume.destroy();
-  chartVolume = new Chart(document.getElementById('chart-volume').getContext('2d'),{
-    type:'bar',data:{labels:w8.labels,datasets:[{data:w8.values,backgroundColor:'rgba(232,255,71,0.3)',borderColor:'#e8ff47',borderWidth:2,borderRadius:6}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
+  // Make canvas wider when there are many weeks so bars don't squish
+  var canvasEl = document.getElementById('chart-volume');
+  var minWidth = Math.max(canvasEl.parentElement.clientWidth, wAll.labels.length * 36);
+  canvasEl.style.width = minWidth + 'px';
+  canvasEl.style.minWidth = minWidth + 'px';
+  chartVolume = new Chart(canvasEl.getContext('2d'),{
+    type:'bar',data:{labels:wAll.labels,datasets:[{data:wAll.values,backgroundColor:'rgba(232,255,71,0.3)',borderColor:'#e8ff47',borderWidth:2,borderRadius:6}]},
+    options:{responsive:false,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
   });
   var dist=getMuscleDistribution();
   var maxD=Math.max.apply(null,Object.values(dist).concat([1]));
@@ -1226,8 +1312,9 @@ function renderStorico() {
   document.getElementById('history-list').innerHTML = state.sessions.slice().reverse().map(function(s,i){
     var idx=state.sessions.length-1-i;
     var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+    var retroBadge = s.retro ? '<span style="background:rgba(30,144,255,0.2);color:#1e90ff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;border:1px solid rgba(30,144,255,0.4);margin-left:8px">RETRO</span>' : '';
     return '<div class="history-item" onclick="showSessionDetail('+idx+')">'+
-      '<div class="history-date">'+date+'</div><div class="history-name">'+s.name+'</div>'+
+      '<div class="history-date">'+date+retroBadge+'</div><div class="history-name">'+s.name+'</div>'+
       '<div class="history-stats">'+
       '<div><div class="hs-val">'+(s.exercises?s.exercises.length:0)+'</div><div class="hs-lbl">esercizi</div></div>'+
       '<div><div class="hs-val">'+(s.totalSets||0)+'</div><div class="hs-lbl">serie</div></div>'+
@@ -1237,15 +1324,35 @@ function renderStorico() {
   }).join('');
 }
 
-function getLast8WeeksVolume() {
-  var labels=[],values=[];
-  for(var w=7;w>=0;w--){
-    var start=new Date();start.setDate(start.getDate()-w*7-start.getDay());start.setHours(0,0,0,0);
-    var end=new Date(start);end.setDate(end.getDate()+7);
-    var vol=state.sessions.filter(function(s){var d=new Date(s.date);return d>=start&&d<end;}).reduce(function(a,s){return a+(s.totalVolume||0);},0);
-    values.push(Math.round(vol));labels.push('S'+(8-w));
+function getAllWeeksVolume() {
+  if (!state.sessions.length) return {labels:['S1'],values:[0]};
+  // Find the earliest session date
+  var earliest = state.sessions.reduce(function(min,s){var d=new Date(s.date);return d<min?d:min;}, new Date(state.sessions[0].date));
+  // Start from Monday of earliest week
+  var start = new Date(earliest);
+  var day = start.getDay(); // 0=sun
+  start.setDate(start.getDate() - (day===0?6:day-1));
+  start.setHours(0,0,0,0);
+  // End: current week's Sunday
+  var now = new Date();
+  var curDay = now.getDay();
+  var end = new Date(now);
+  end.setDate(end.getDate() + (curDay===0?0:7-curDay));
+  end.setHours(23,59,59,999);
+  var labels=[], values=[];
+  var cursor = new Date(start);
+  var weekNum = 1;
+  while (cursor <= end) {
+    var wStart = new Date(cursor);
+    var wEnd = new Date(cursor); wEnd.setDate(wEnd.getDate()+7);
+    var vol = state.sessions.filter(function(s){var d=new Date(s.date);return d>=wStart&&d<wEnd;}).reduce(function(a,s){return a+(s.totalVolume||0);},0);
+    var d = new Date(cursor);
+    labels.push(d.getDate()+'/'+(d.getMonth()+1));
+    values.push(Math.round(vol));
+    cursor.setDate(cursor.getDate()+7);
+    weekNum++;
   }
-  return {labels:labels,values:values};
+  return {labels:labels, values:values};
 }
 
 function getMuscleDistribution() {
@@ -1276,9 +1383,16 @@ function showSessionDetail(idx) {
   openModal('modal-session-detail');
 }
 
+var deleteSessionIdx = null;
 function deleteSession(idx) {
-  if (!confirm('Eliminare questa sessione?')) return;
-  state.sessions.splice(idx,1);
+  deleteSessionIdx = idx;
+  openModal('modal-confirm-delete');
+}
+function confirmDeleteSession() {
+  closeModal('modal-confirm-delete');
+  if (deleteSessionIdx === null) return;
+  state.sessions.splice(deleteSessionIdx,1);
+  deleteSessionIdx = null;
   saveState();
   closeModal('modal-session-detail');
   renderStorico();
@@ -1380,6 +1494,141 @@ function showToast(msg){
 // ============================================================
 function fmtTime(sec){var m=Math.floor(sec/60),s=sec%60;return(m<10?'0':'')+m+':'+(s<10?'0':'')+s;}
 function fmtDuration(sec){if(!sec)return'0min';var m=Math.floor(sec/60);if(m<60)return m+'min';return Math.floor(m/60)+'h '+(m%60)+'min';}
+
+// ============================================================
+// RETROACTIVE SESSION
+// ============================================================
+var retroExercises = []; // [{exerciseId, sets:[{weight,reps,rpe}]}]
+var retroMuscleFilter = '';
+
+function openRetroModal() {
+  retroExercises = [];
+  retroMuscleFilter = '';
+  // Default date = today
+  var today = new Date().toISOString().split('T')[0];
+  document.getElementById('retro-date').value = today;
+  document.getElementById('retro-name').value = '';
+  document.getElementById('retro-duration').value = '';
+  renderRetroExerciseList();
+  openModal('modal-retro');
+}
+
+function renderRetroExerciseList() {
+  document.getElementById('retro-ex-count').textContent = retroExercises.length;
+  document.getElementById('retro-exercise-list').innerHTML = retroExercises.map(function(re, idx) {
+    var ex = findExercise(re.exerciseId);
+    var name = ex ? (ex.icon+' '+ex.name) : re.exerciseId;
+    var setsHtml = re.sets.map(function(s, si) {
+      return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
+        '<span style="font-size:12px;color:var(--text3);min-width:20px">'+( si+1)+'</span>'+
+        '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+s.weight+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
+        '<input type="number" class="set-inp" style="flex:1" placeholder="rip" value="'+s.reps+'" oninput="updateRetroSet('+idx+','+si+',\'reps\',this.value)" min="1">'+
+        '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
+          ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+(s.rpe===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
+        '</select>'+
+        '<button class="btn btn-xs btn-danger btn-icon" onclick="removeRetroSet('+idx+','+si+')">✕</button>'+
+      '</div>';
+    }).join('');
+    return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">'+
+      '<div class="flex justify-between items-center" style="margin-bottom:8px">'+
+        '<div class="font-bold" style="font-size:14px">'+name+'</div>'+
+        '<div class="flex gap-8">'+
+          '<button class="btn btn-xs btn-secondary" onclick="addRetroSet('+idx+')">+ Serie</button>'+
+          '<button class="btn btn-xs btn-danger" onclick="removeRetroExercise('+idx+')">Rimuovi</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="flex gap-8" style="margin-bottom:6px">'+
+        '<span style="font-size:10px;color:var(--text3);min-width:20px"></span>'+
+        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
+        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RIP</span>'+
+        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE</span>'+
+        '<span style="width:34px"></span>'+
+      '</div>'+
+      setsHtml+
+    '</div>';
+  }).join('') || '<div style="color:var(--text3);font-size:13px;text-align:center;padding:12px">Aggiungi esercizi per iniziare</div>';
+}
+
+function addRetroExercise() {
+  // open exercise picker in retro mode
+  retroMuscleFilter = '';
+  var chips = '<div class="chip'+(retroMuscleFilter===''?' selected':'')+'" onclick="setRetroMuscleFilter(\'\',this)">Tutti</div>'+
+    MUSCLES.map(function(m){return '<div class="chip'+(retroMuscleFilter===m?' selected':'')+'" onclick="setRetroMuscleFilter(\''+m+'\',this)">'+m+'</div>';}).join('');
+  document.getElementById('retro-muscle-filter-chips').innerHTML = chips;
+  document.getElementById('retro-ex-search').value = '';
+  filterRetroExercises();
+  openModal('modal-retro-ex-picker');
+}
+
+function setRetroMuscleFilter(m, el) {
+  retroMuscleFilter = m;
+  document.querySelectorAll('#retro-muscle-filter-chips .chip').forEach(function(c){c.classList.remove('selected');});
+  el.classList.add('selected');
+  filterRetroExercises();
+}
+
+function filterRetroExercises() {
+  var q = document.getElementById('retro-ex-search').value.toLowerCase();
+  var list = allExercises().filter(function(e){
+    return (!retroMuscleFilter || e.muscle===retroMuscleFilter) &&
+           (!q || e.name.toLowerCase().includes(q) || (e.muscle||'').toLowerCase().includes(q));
+  });
+  document.getElementById('retro-exercise-picker-list').innerHTML = list.map(function(e){
+    return '<div class="ex-picker-item" onclick="pickRetroExercise(\''+e.id+'\')">'+
+      '<div><div class="ex-picker-name">'+e.icon+' '+e.name+'</div><div class="ex-picker-cat">'+e.muscle+' · '+e.category+'</div></div>'+
+      '<span style="color:var(--accent);font-size:18px">+</span></div>';
+  }).join('') || '<div style="color:var(--text3);font-size:13px;padding:12px 0">Nessun risultato</div>';
+}
+
+function pickRetroExercise(exId) {
+  retroExercises.push({exerciseId: exId, sets:[{weight:0,reps:10,rpe:''}]});
+  closeModal('modal-retro-ex-picker');
+  renderRetroExerciseList();
+}
+
+function removeRetroExercise(idx) {
+  retroExercises.splice(idx, 1);
+  renderRetroExerciseList();
+}
+
+function addRetroSet(idx) {
+  var last = retroExercises[idx].sets[retroExercises[idx].sets.length-1] || {weight:0,reps:10,rpe:''};
+  retroExercises[idx].sets.push({weight:last.weight, reps:last.reps, rpe:last.rpe});
+  renderRetroExerciseList();
+}
+
+function removeRetroSet(exIdx, setIdx) {
+  retroExercises[exIdx].sets.splice(setIdx, 1);
+  if (!retroExercises[exIdx].sets.length) retroExercises[exIdx].sets.push({weight:0,reps:10,rpe:''});
+  renderRetroExerciseList();
+}
+
+function updateRetroSet(exIdx, setIdx, field, val) {
+  retroExercises[exIdx].sets[setIdx][field] = field==='rpe' ? val : parseFloat(val)||0;
+}
+
+function saveRetroSession() {
+  var name = document.getElementById('retro-name').value.trim();
+  var date = document.getElementById('retro-date').value;
+  var durMin = parseFloat(document.getElementById('retro-duration').value)||0;
+  if (!name) { showToast('Inserisci un nome'); return; }
+  if (!date) { showToast('Inserisci una data'); return; }
+  if (!retroExercises.length) { showToast('Aggiungi almeno un esercizio'); return; }
+  var totalVolume=0, totalSets=0;
+  var exercises = retroExercises.map(function(re){
+    var vol = re.sets.reduce(function(a,s){return a+(s.weight*s.reps);},0);
+    totalVolume += vol; totalSets += re.sets.length;
+    return {exerciseId: re.exerciseId, sets: re.sets.map(function(s){return {weight:s.weight,reps:s.reps,rpe:s.rpe,type:'work',done:true};}), volume: vol, notes:''};
+  });
+  // Insert in chronological order
+  var newSession = {date: new Date(date).toISOString(), name:name, duration:durMin*60, exercises:exercises, totalVolume:totalVolume, totalSets:totalSets, retro:true};
+  state.sessions.push(newSession);
+  state.sessions.sort(function(a,b){return new Date(a.date)-new Date(b.date);});
+  saveState();
+  closeModal('modal-retro');
+  renderStorico();
+  showToast('Sessione aggiunta!');
+}
 
 // ============================================================
 // INIT
