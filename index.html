@@ -32,7 +32,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:8px 0 calc(8px + var(--safe-bot));display:flex;z-index:100}
 .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;cursor:pointer;transition:all 0.2s}
 .nav-icon{font-size:22px;transition:transform 0.2s}
-.nav-label{font-size:10px;color:var(--text3);font-weight:600;letter-spacing:0.5px;transition:color 0.2s}
+.nav-label{font-size:9px;color:var(--text3);font-weight:600;letter-spacing:0.3px;transition:color 0.2s}
 .nav-item.active .nav-label{color:var(--accent)}
 .nav-item.active .nav-icon{transform:scale(1.1)}
 
@@ -318,11 +318,33 @@ select.input{appearance:none}
   <div style="height:20px"></div>
 </div>
 
+<!-- ESERCIZI -->
+<div id="page-esercizi" class="page">
+  <div class="page-header">
+    <div class="page-title">ESERCIZI</div>
+    <div class="page-subtitle">Libreria completa</div>
+  </div>
+  <div style="padding:0 16px;margin-bottom:12px">
+    <button class="btn btn-primary btn-full" onclick="pickerMode='esercizi';openCreateCustomExercise()">+ Nuovo esercizio</button>
+  </div>
+  <div class="search-bar">
+    <span style="color:var(--text3)">🔍</span>
+    <input type="text" placeholder="Cerca per nome o muscolo..." id="ex-lib-search" oninput="renderEsercizi()">
+  </div>
+  <div class="chip-row" style="padding:0 16px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap" id="ex-lib-muscle-chips"></div>
+  <div id="ex-lib-list"></div>
+  <div style="padding:0 16px;margin-top:8px">
+    <button class="btn btn-ghost btn-sm btn-full" style="color:var(--text3)" onclick="restoreBuiltins()">↩ Ripristina tutti gli esercizi built-in</button>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
 <!-- NAVBAR -->
 <nav class="navbar">
   <div class="nav-item active" onclick="showPage('home')" id="nav-home"><div class="nav-icon">🏠</div><div class="nav-label">HOME</div></div>
   <div class="nav-item" onclick="showPage('allenamento')" id="nav-allenamento"><div class="nav-icon">⚡</div><div class="nav-label">ALLENA</div></div>
   <div class="nav-item" onclick="showPage('template')" id="nav-template"><div class="nav-icon">📋</div><div class="nav-label">TEMPLATE</div></div>
+  <div class="nav-item" onclick="showPage('esercizi')" id="nav-esercizi"><div class="nav-icon">🏋️</div><div class="nav-label">ESERCIZI</div></div>
   <div class="nav-item" onclick="showPage('storico')" id="nav-storico"><div class="nav-icon">📈</div><div class="nav-label">STORICO</div></div>
   <div class="nav-item" onclick="showPage('profilo')" id="nav-profilo"><div class="nav-icon">👤</div><div class="nav-label">PROFILO</div></div>
 </nav>
@@ -588,6 +610,14 @@ select.input{appearance:none}
   </div>
 </div>
 
+<!-- MODAL: Generic (reusable for edit/delete exercise) -->
+<div class="modal-overlay" id="modal-generic">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div id="generic-modal-content"></div>
+  </div>
+</div>
+
 <!-- MODAL: Confirm Finish -->
 <div class="modal-overlay" id="modal-confirm-finish">
   <div class="modal" style="text-align:center">
@@ -678,7 +708,7 @@ const BUILTIN_EXERCISES = [
 // ============================================================
 // STATE
 // ============================================================
-let state = { templates:[], sessions:[], customExercises:[], profile:{name:'Atleta',unit:'kg'}, activeSession:null };
+let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null };
 
 // temp state
 let editingTemplateIdx = null;
@@ -698,7 +728,15 @@ let sessionTimerInterval = null;
 let restTimerInterval = null;
 let restSecondsLeft = 0, restSecondsMax = 0;
 
-function allExercises() { return [...BUILTIN_EXERCISES, ...state.customExercises]; }
+function allExercises() {
+  var builtins = BUILTIN_EXERCISES
+    .filter(function(e){ return !state.deletedBuiltins.includes(e.id); })
+    .map(function(e){
+      var ov = state.builtinOverrides[e.id];
+      return ov ? Object.assign({}, e, ov) : e;
+    });
+  return builtins.concat(state.customExercises);
+}
 function findExercise(id) { return allExercises().find(function(e){return e.id===id;}); }
 
 // ============================================================
@@ -712,6 +750,8 @@ function loadState() {
       state.templates = p.templates || [];
       state.sessions = p.sessions || [];
       state.customExercises = p.customExercises || [];
+      state.deletedBuiltins = p.deletedBuiltins || [];
+      state.builtinOverrides = p.builtinOverrides || {};
       state.profile = p.profile || {name:'Atleta',unit:'kg'};
     }
   } catch(e) {}
@@ -720,7 +760,10 @@ function saveState() {
   try {
     localStorage.setItem('ironlog_v3', JSON.stringify({
       templates:state.templates, sessions:state.sessions,
-      customExercises:state.customExercises, profile:state.profile
+      customExercises:state.customExercises,
+      deletedBuiltins:state.deletedBuiltins,
+      builtinOverrides:state.builtinOverrides,
+      profile:state.profile
     }));
   } catch(e) {}
 }
@@ -737,10 +780,179 @@ function showPage(page) {
   if (page==='allenamento') renderAllenamento();
   if (page==='template') renderTemplates();
   if (page==='storico') renderStorico();
+  if (page==='esercizi') renderEsercizi();
   if (page==='profilo') renderProfilo();
 }
 
 // ============================================================
+// ESERCIZI
+// ============================================================
+var exLibMuscleFilter = '';
+var editingExerciseId = null;
+
+function renderEsercizi() {
+  var chips = '<div class="chip'+(exLibMuscleFilter===''?' selected':'')+'" onclick="setExLibFilter(\'\',this)">Tutti</div>'+
+    MUSCLES.map(function(m){
+      return '<div class="chip'+(exLibMuscleFilter===m?' selected':'')+'" onclick="setExLibFilter(\''+m+'\',this)">'+m+'</div>';
+    }).join('');
+  document.getElementById('ex-lib-muscle-chips').innerHTML = chips;
+
+  var q = (document.getElementById('ex-lib-search').value||'').toLowerCase();
+  var list = allExercises().filter(function(e){
+    return (!exLibMuscleFilter || e.muscle===exLibMuscleFilter) &&
+           (!q || e.name.toLowerCase().includes(q) || (e.muscle||'').toLowerCase().includes(q) || (e.category||'').toLowerCase().includes(q));
+  });
+
+  var grouped = {};
+  list.forEach(function(e){
+    var m = e.muscle||'Altro';
+    if (!grouped[m]) grouped[m] = [];
+    grouped[m].push(e);
+  });
+
+  var html = '';
+  var order = MUSCLES.concat(Object.keys(grouped).filter(function(m){return !MUSCLES.includes(m);}));
+  var shown = exLibMuscleFilter ? [exLibMuscleFilter] : order;
+  shown.forEach(function(m){
+    if (!grouped[m] || !grouped[m].length) return;
+    html += '<div style="padding:0 16px;margin:16px 0 6px">'+
+      '<div style="font-size:11px;font-weight:700;color:'+(MUSCLE_COLORS[m]||'var(--accent)')+';text-transform:uppercase;letter-spacing:1px">'+
+        m+' <span style="color:var(--text3);font-weight:400">('+grouped[m].length+')</span>'+
+      '</div></div>';
+    grouped[m].forEach(function(e){
+      var isCustom = !!state.customExercises.find(function(c){return c.id===e.id;});
+      var isModified = !isCustom && !!state.builtinOverrides[e.id];
+      var badge = isCustom
+        ? '<span style="font-size:10px;color:var(--blue);background:rgba(30,144,255,0.12);padding:2px 7px;border-radius:10px;border:1px solid rgba(30,144,255,0.3)">Custom</span>'
+        : isModified
+          ? '<span style="font-size:10px;color:var(--warm);background:rgba(255,159,67,0.12);padding:2px 7px;border-radius:10px;border:1px solid rgba(255,159,67,0.3)">Modificato</span>'
+          : '<span style="font-size:10px;color:var(--text3);background:var(--bg3);padding:2px 7px;border-radius:10px;border:1px solid var(--border)">Built-in</span>';
+      html += '<div class="history-item" style="margin:0 16px 8px;padding:12px 14px">'+
+        '<div class="flex justify-between items-center" style="gap:8px">'+
+          '<div class="flex items-center gap-8" style="min-width:0;flex:1">'+
+            '<span style="font-size:22px;flex-shrink:0">'+e.icon+'</span>'+
+            '<div style="min-width:0">'+
+              '<div class="font-bold" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e.name+'</div>'+
+              '<div class="flex items-center gap-8" style="margin-top:4px;flex-wrap:wrap;gap:6px">'+
+                '<span style="font-size:11px;color:var(--text2)">'+e.category+'</span>'+
+                badge+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+          '<div class="flex gap-8" style="flex-shrink:0">'+
+            '<button class="btn btn-xs btn-secondary" onclick="openEditExercise(\''+e.id+'\')">✏️</button>'+
+            '<button class="btn btn-xs btn-danger" onclick="promptDeleteExercise(\''+e.id+'\')">🗑️</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    });
+  });
+
+  if (!html) html = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">Nessun risultato</div><div class="empty-desc">Prova a cambiare filtro o ricerca</div></div>';
+  document.getElementById('ex-lib-list').innerHTML = html;
+}
+
+function setExLibFilter(m, el) {
+  exLibMuscleFilter = m;
+  renderEsercizi();
+}
+
+function openEditExercise(id) {
+  var e = allExercises().find(function(x){return x.id===id;});
+  if (!e) return;
+  editingExerciseId = id;
+  // Inject content into generic modal
+  document.getElementById('generic-modal-content').innerHTML =
+    '<div class="modal-title">Modifica esercizio</div>'+
+    '<div class="input-group"><label class="input-label">Nome</label>'+
+    '<input class="input" id="edit-ex-name" value="'+e.name.replace(/"/g,'&quot;')+'" placeholder="Nome esercizio"></div>'+
+    '<div class="input-group"><label class="input-label">Gruppo muscolare</label>'+
+    '<select class="input" id="edit-ex-muscle">'+
+      '<option value="">Seleziona...</option>'+
+      ['Petto','Schiena','Spalle','Bicipiti','Tricipiti','Gambe','Addome'].map(function(m){
+        return '<option'+(e.muscle===m?' selected':'')+'>'+m+'</option>';
+      }).join('')+
+    '</select></div>'+
+    '<div class="input-group"><label class="input-label">Categoria</label>'+
+    '<select class="input" id="edit-ex-category">'+
+      ['Multiarticolare','Isolamento','Complementare','Cardio'].map(function(c){
+        return '<option'+(e.category===c?' selected':'')+'>'+c+'</option>';
+      }).join('')+
+    '</select></div>'+
+    '<div class="input-group"><label class="input-label">Icona (emoji)</label>'+
+    '<input class="input" id="edit-ex-icon" value="'+e.icon+'" placeholder="🏋️"></div>'+
+    '<div class="flex gap-8">'+
+      '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Annulla</button>'+
+      '<button class="btn btn-primary" style="flex:2" onclick="saveEditExercise()">Salva</button>'+
+    '</div>';
+  openModal('modal-generic');
+}
+
+function saveEditExercise() {
+  var id = editingExerciseId;
+  if (!id) return;
+  var name = document.getElementById('edit-ex-name').value.trim();
+  var muscle = document.getElementById('edit-ex-muscle').value;
+  var category = document.getElementById('edit-ex-category').value;
+  var iconInput = document.getElementById('edit-ex-icon').value.trim();
+  var original = allExercises().find(function(x){return x.id===id;});
+  var icon = iconInput || (original && original.icon) || '🏋️';
+  if (!name) { showToast('Inserisci il nome'); return; }
+  if (!muscle) { showToast('Seleziona gruppo muscolare'); return; }
+  var isCustom = !!state.customExercises.find(function(c){return c.id===id;});
+  if (isCustom) {
+    var cx = state.customExercises.find(function(c){return c.id===id;});
+    cx.name=name; cx.muscle=muscle; cx.category=category; cx.icon=icon;
+  } else {
+    state.builtinOverrides[id] = {name:name, muscle:muscle, category:category, icon:icon};
+  }
+  saveState();
+  closeModal('modal-generic');
+  renderEsercizi();
+  showToast('Esercizio aggiornato');
+}
+
+var deleteExerciseId = null;
+function promptDeleteExercise(id) {
+  deleteExerciseId = id;
+  var e = allExercises().find(function(x){return x.id===id;});
+  var exName = e ? e.name : '';
+  document.getElementById('generic-modal-content').innerHTML =
+    '<div style="text-align:center">'+
+    '<div style="font-size:48px;margin-bottom:12px">🗑️</div>'+
+    '<div class="modal-title" style="text-align:center">Eliminare esercizio?</div>'+
+    '<div style="color:var(--text2);font-size:15px;font-weight:600;margin-bottom:6px">'+exName+'</div>'+
+    '<div style="color:var(--text3);font-size:12px;margin-bottom:24px">I built-in possono essere ripristinati in seguito</div>'+
+    '<div class="flex gap-8">'+
+      '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Annulla</button>'+
+      '<button class="btn btn-danger" style="flex:1" onclick="confirmDeleteExercise()">Elimina</button>'+
+    '</div></div>';
+  openModal('modal-generic');
+}
+
+function confirmDeleteExercise() {
+  var id = deleteExerciseId;
+  closeModal('modal-generic');
+  if (!id) return;
+  var isCustom = !!state.customExercises.find(function(c){return c.id===id;});
+  if (isCustom) {
+    state.customExercises = state.customExercises.filter(function(c){return c.id!==id;});
+  } else {
+    if (!state.deletedBuiltins.includes(id)) state.deletedBuiltins.push(id);
+    delete state.builtinOverrides[id];
+  }
+  saveState();
+  renderEsercizi();
+  showToast('Esercizio eliminato');
+}
+
+function restoreBuiltins() {
+  state.deletedBuiltins = [];
+  state.builtinOverrides = {};
+  saveState();
+  renderEsercizi();
+  showToast('Esercizi built-in ripristinati');
+}
 // HOME
 // ============================================================
 function renderHome() {
@@ -1045,7 +1257,11 @@ function saveCustomExercise() {
   saveState();
   closeModal('modal-custom-exercise');
   showToast('Esercizio creato');
-  setTimeout(function(){openExercisePicker(pickerMode);},300);
+  if (pickerMode === 'esercizi') {
+    renderEsercizi();
+  } else {
+    setTimeout(function(){openExercisePicker(pickerMode);},300);
+  }
 }
 
 // ============================================================
