@@ -322,20 +322,56 @@ select.input{appearance:none}
 <div id="page-esercizi" class="page">
   <div class="page-header">
     <div class="page-title">ESERCIZI</div>
-    <div class="page-subtitle">Libreria completa</div>
+    <div class="page-subtitle">Libreria & Progressi</div>
   </div>
-  <div style="padding:0 16px;margin-bottom:12px">
-    <button class="btn btn-primary btn-full" onclick="pickerMode='esercizi';openCreateCustomExercise()">+ Nuovo esercizio</button>
+  <!-- Tab switcher -->
+  <div style="display:flex;gap:0;margin:0 16px 16px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+    <div id="tab-libreria" onclick="switchExTab('libreria')" style="flex:1;text-align:center;padding:10px;font-size:13px;font-weight:700;background:var(--accent);color:#000;cursor:pointer">📚 Libreria</div>
+    <div id="tab-progressi" onclick="switchExTab('progressi')" style="flex:1;text-align:center;padding:10px;font-size:13px;font-weight:700;background:var(--bg2);color:var(--text2);cursor:pointer">📈 Progressi</div>
   </div>
-  <div class="search-bar">
-    <span style="color:var(--text3)">🔍</span>
-    <input type="text" placeholder="Cerca per nome o muscolo..." id="ex-lib-search" oninput="renderEsercizi()">
+
+  <!-- Libreria tab -->
+  <div id="exTab-libreria">
+    <div style="padding:0 16px;margin-bottom:12px">
+      <button class="btn btn-primary btn-full" onclick="pickerMode='esercizi';openCreateCustomExercise()">+ Nuovo esercizio</button>
+    </div>
+    <div class="search-bar">
+      <span style="color:var(--text3)">🔍</span>
+      <input type="text" placeholder="Cerca per nome o muscolo..." id="ex-lib-search" oninput="renderEsercizi()">
+    </div>
+    <div class="chip-row" style="padding:0 16px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap" id="ex-lib-muscle-chips"></div>
+    <div id="ex-lib-list"></div>
+    <div style="padding:0 16px;margin-top:8px">
+      <button class="btn btn-ghost btn-sm btn-full" style="color:var(--text3)" onclick="restoreBuiltins()">↩ Ripristina tutti gli esercizi built-in</button>
+    </div>
   </div>
-  <div class="chip-row" style="padding:0 16px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap" id="ex-lib-muscle-chips"></div>
-  <div id="ex-lib-list"></div>
-  <div style="padding:0 16px;margin-top:8px">
-    <button class="btn btn-ghost btn-sm btn-full" style="color:var(--text3)" onclick="restoreBuiltins()">↩ Ripristina tutti gli esercizi built-in</button>
+
+  <!-- Progressi tab -->
+  <div id="exTab-progressi" style="display:none">
+    <div style="padding:0 16px;margin-bottom:12px">
+      <div class="input-label" style="margin-bottom:8px">Seleziona esercizio</div>
+      <select class="input" id="ex-prog-select" onchange="renderExProgresso()">
+        <option value="">Scegli un esercizio...</option>
+      </select>
+    </div>
+    <div id="ex-prog-wrap" style="display:none">
+      <div class="flex gap-8 mb-12" id="ex-prog-stat-boxes" style="padding:0 16px;margin-bottom:12px;flex-wrap:wrap;display:flex;gap:8px"></div>
+      <div class="card" style="margin-top:0">
+        <div class="card-title">Peso massimo nel tempo (kg)</div>
+        <div class="chart-container"><canvas id="chart-ex-prog-weight"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Volume per sessione (kg totali)</div>
+        <div class="chart-container"><canvas id="chart-ex-prog-volume"></canvas></div>
+      </div>
+    </div>
+    <div id="ex-prog-empty" style="display:none;padding:40px 30px;text-align:center">
+      <div style="font-size:40px;margin-bottom:12px">📊</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nessun dato</div>
+      <div style="font-size:13px;color:var(--text2)">Completa almeno un allenamento con questo esercizio</div>
+    </div>
   </div>
+
   <div style="height:20px"></div>
 </div>
 
@@ -727,6 +763,8 @@ let muscleFilter = '';
 let sessionTimerInterval = null;
 let restTimerInterval = null;
 let restSecondsLeft = 0, restSecondsMax = 0;
+// Background-aware rest timer: store absolute end time
+let restEndTime = null;
 
 function allExercises() {
   var builtins = BUILTIN_EXERCISES
@@ -753,18 +791,50 @@ function loadState() {
       state.deletedBuiltins = p.deletedBuiltins || [];
       state.builtinOverrides = p.builtinOverrides || {};
       state.profile = p.profile || {name:'Atleta',unit:'kg'};
+      // Restore active session if present
+      if (p.activeSession) {
+        state.activeSession = p.activeSession;
+        // Restore exercise objects (ex field) which are not serialized
+        state.activeSession.exercises.forEach(function(ex) {
+          ex.ex = findExercise(ex.config.exerciseId);
+        });
+        // Restore rest timer if it was running
+        if (p.restEndTime && p.restSecondsMax) {
+          restEndTime = p.restEndTime;
+          restSecondsMax = p.restSecondsMax;
+          var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+          if (remaining > 0) {
+            restSecondsLeft = remaining;
+            _scheduleRestTimer();
+          } else {
+            // Timer expired while page was closed
+            restEndTime = null;
+          }
+        }
+      }
     }
   } catch(e) {}
 }
 function saveState() {
   try {
-    localStorage.setItem('ironlog_v3', JSON.stringify({
+    var toSave = {
       templates:state.templates, sessions:state.sessions,
       customExercises:state.customExercises,
       deletedBuiltins:state.deletedBuiltins,
       builtinOverrides:state.builtinOverrides,
       profile:state.profile
-    }));
+    };
+    // Persist active session (without the 'ex' reference to avoid circular issues)
+    if (state.activeSession) {
+      var sessionCopy = JSON.parse(JSON.stringify(state.activeSession));
+      sessionCopy.exercises.forEach(function(e){ delete e.ex; });
+      toSave.activeSession = sessionCopy;
+    }
+    if (restEndTime) {
+      toSave.restEndTime = restEndTime;
+      toSave.restSecondsMax = restSecondsMax;
+    }
+    localStorage.setItem('ironlog_v3', JSON.stringify(toSave));
   } catch(e) {}
 }
 
@@ -855,6 +925,76 @@ function renderEsercizi() {
 function setExLibFilter(m, el) {
   exLibMuscleFilter = m;
   renderEsercizi();
+}
+
+// Tab switcher for esercizi page
+var currentExTab = 'libreria';
+var chartExProgWeight = null, chartExProgVolume = null;
+
+function switchExTab(tab) {
+  currentExTab = tab;
+  document.getElementById('exTab-libreria').style.display = tab === 'libreria' ? 'block' : 'none';
+  document.getElementById('exTab-progressi').style.display = tab === 'progressi' ? 'block' : 'none';
+  document.getElementById('tab-libreria').style.background = tab === 'libreria' ? 'var(--accent)' : 'var(--bg2)';
+  document.getElementById('tab-libreria').style.color = tab === 'libreria' ? '#000' : 'var(--text2)';
+  document.getElementById('tab-progressi').style.background = tab === 'progressi' ? 'var(--accent)' : 'var(--bg2)';
+  document.getElementById('tab-progressi').style.color = tab === 'progressi' ? '#000' : 'var(--text2)';
+  if (tab === 'progressi') populateExProgSelect();
+}
+
+function populateExProgSelect() {
+  var ids = getExercisesWithHistory();
+  var sel = document.getElementById('ex-prog-select');
+  var cur = sel.value;
+  sel.innerHTML = '<option value="">Scegli un esercizio...</option>' +
+    ids.map(function(id){ var ex = findExercise(id); return ex ? '<option value="'+id+'"'+(id===cur?' selected':'')+'>'+ex.icon+' '+ex.name+'</option>' : ''; }).join('');
+  if (cur) renderExProgresso();
+}
+
+function renderExProgresso() {
+  var exId = document.getElementById('ex-prog-select').value;
+  var wrap = document.getElementById('ex-prog-wrap');
+  var empty = document.getElementById('ex-prog-empty');
+  if (!exId) { wrap.style.display='none'; empty.style.display='none'; return; }
+
+  var dataPoints = [];
+  state.sessions.forEach(function(s) {
+    var e = (s.exercises||[]).find(function(e){ return e.exerciseId === exId; });
+    if (!e || !e.sets || !e.sets.length) return;
+    var mx = Math.max.apply(null, e.sets.map(function(s){ return s.weight||0; }));
+    var vol = e.sets.reduce(function(a,s){ return a + (s.weight||0)*(s.reps||0); }, 0);
+    dataPoints.push({ label: new Date(s.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'}), maxW: mx, vol: vol });
+  });
+
+  if (!dataPoints.length) { wrap.style.display='none'; empty.style.display='block'; return; }
+  empty.style.display='none'; wrap.style.display='block';
+
+  var maxWeight = Math.max.apply(null, dataPoints.map(function(d){ return d.maxW; }));
+  var totalVol = dataPoints.reduce(function(a,d){ return a + d.vol; }, 0);
+  var totalSess = dataPoints.length;
+
+  document.getElementById('ex-prog-stat-boxes').innerHTML =
+    '<div class="stat-box"><div class="stat-box-val">'+totalSess+'</div><div class="stat-box-lbl">Sessioni</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+maxWeight+'kg</div><div class="stat-box-lbl">Max peso</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+Math.round(totalVol/totalSess)+'kg</div><div class="stat-box-lbl">Vol. medio</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+(totalVol/1000).toFixed(1)+'t</div><div class="stat-box-lbl">Vol. totale</div></div>';
+
+  var labels = dataPoints.map(function(d){ return d.label; });
+  var chartOpts = { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}} };
+
+  if (chartExProgWeight) chartExProgWeight.destroy();
+  chartExProgWeight = new Chart(document.getElementById('chart-ex-prog-weight').getContext('2d'), {
+    type:'line',
+    data:{ labels:labels, datasets:[{ data:dataPoints.map(function(d){return d.maxW;}), borderColor:'#e8ff47', backgroundColor:'rgba(232,255,71,0.08)', borderWidth:2, fill:true, tension:0.4, pointBackgroundColor:'#e8ff47', pointRadius:4 }] },
+    options: chartOpts
+  });
+
+  if (chartExProgVolume) chartExProgVolume.destroy();
+  chartExProgVolume = new Chart(document.getElementById('chart-ex-prog-volume').getContext('2d'), {
+    type:'bar',
+    data:{ labels:labels, datasets:[{ data:dataPoints.map(function(d){return d.vol;}), backgroundColor:'rgba(46,213,115,0.25)', borderColor:'#2ed573', borderWidth:2, borderRadius:6 }] },
+    options: chartOpts
+  });
 }
 
 function openEditExercise(id) {
@@ -1317,6 +1457,22 @@ function startSessionTimer() {
   },1000);
 }
 
+// Call once on page load if session was restored
+function resumeSessionTimerIfActive() {
+  if (state.activeSession) {
+    startSessionTimer();
+    // Show rest bar if timer was running
+    if (restEndTime) {
+      var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+      if (remaining > 0) {
+        document.getElementById('rest-timer-bar').style.display = 'flex';
+        restSecondsLeft = remaining;
+        updateRestDisplay();
+      }
+    }
+  }
+}
+
 function addExerciseToSession() {
   pickerMode = 'session';
   configExerciseIdx = null;
@@ -1370,6 +1526,7 @@ function renderSessionExercises() {
 function updateSet(exIdx,setIdx,field,value) {
   if (!state.activeSession) return;
   state.activeSession.exercises[exIdx].sets[setIdx][field] = field==='rpe' ? value : (parseFloat(value)||0);
+  saveState();
 }
 
 function toggleSet(exIdx,setIdx) {
@@ -1377,6 +1534,7 @@ function toggleSet(exIdx,setIdx) {
   var set = state.activeSession.exercises[exIdx].sets[setIdx];
   set.done = !set.done;
   if (set.done && set.type==='work') startRestTimer(state.activeSession.exercises[exIdx].config.rest||120);
+  saveState();
   renderSessionExercises();
 }
 
@@ -1386,6 +1544,7 @@ function addSet(exIdx) {
   var last = null;
   for (var i=sets.length-1;i>=0;i--){if(sets[i].type==='work'){last=sets[i];break;}}
   sets.push({type:'work',reps:last?last.reps:10,weight:last?last.weight:0,rpe:'',done:false});
+  saveState();
   renderSessionExercises();
 }
 
@@ -1394,6 +1553,7 @@ function removeLastSet(exIdx) {
   var sets = state.activeSession.exercises[exIdx].sets;
   if (sets.length<=1){showToast('Minimo 1 serie');return;}
   sets.pop();
+  saveState();
   renderSessionExercises();
 }
 
@@ -1401,6 +1561,7 @@ function removeSessionExercise(exIdx) {
   if (!state.activeSession) return;
   if (!confirm('Rimuovere questo esercizio?')) return;
   state.activeSession.exercises.splice(exIdx,1);
+  saveState();
   renderSessionExercises();
 }
 
@@ -1431,38 +1592,92 @@ function updateSIDisplay() {
 function saveSI() {
   if (siExIdx===null) return;
   state.activeSession.exercises[siExIdx].config.increments = {weight:siIncrements.weight,sets:siIncrements.sets,reps:siIncrements.reps};
+  saveState();
   closeModal('modal-session-increment');
   renderSessionExercises();
   showToast('Progressione aggiornata');
 }
 
-// Rest timer
+// Rest timer — background-aware: uses absolute end timestamp
 function startRestTimer(seconds) {
   if (restTimerInterval) clearInterval(restTimerInterval);
-  restSecondsLeft=seconds; restSecondsMax=seconds;
+  restEndTime = Date.now() + seconds * 1000;
+  restSecondsMax = seconds;
+  restSecondsLeft = seconds;
   document.getElementById('rest-timer-bar').style.display='flex';
   updateRestDisplay();
+  saveState(); // persist end time immediately
+  _scheduleRestTimer();
+  // Show notification when rest ends (if supported)
+  if ('Notification' in window && Notification.permission === 'granted') {
+    // scheduled via timeout below
+  } else if ('Notification' in window && Notification.permission !== 'denied') {
+    Notification.requestPermission();
+  }
+}
+
+function _scheduleRestTimer() {
+  if (restTimerInterval) clearInterval(restTimerInterval);
   restTimerInterval = setInterval(function(){
-    restSecondsLeft--;
-    if (restSecondsLeft<=0){clearInterval(restTimerInterval);document.getElementById('rest-timer-bar').style.display='none';showToast('Recupero terminato!');}
-    else updateRestDisplay();
-  },1000);
+    var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+    restSecondsLeft = remaining;
+    if (remaining <= 0) {
+      clearInterval(restTimerInterval);
+      restTimerInterval = null;
+      restEndTime = null;
+      saveState();
+      var bar = document.getElementById('rest-timer-bar');
+      if (bar) bar.style.display = 'none';
+      showToast('Recupero terminato! 💪');
+      // Vibrate on mobile
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      // Notification if app was in background
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('IronLog — Recupero terminato!', {body:'Pronto per la prossima serie 💪', icon:''});
+      }
+    } else {
+      updateRestDisplay();
+    }
+  }, 500); // tick every 500ms to stay accurate after background
 }
 
 function updateRestDisplay() {
   var m=Math.floor(restSecondsLeft/60), s=restSecondsLeft%60;
-  document.getElementById('rest-display').textContent=m+':'+(s<10?'0':'')+s;
-  var pct=(restSecondsLeft/restSecondsMax)*100;
-  document.getElementById('rest-bar-fill').style.width=pct+'%';
+  var dispEl = document.getElementById('rest-display');
+  var barFill = document.getElementById('rest-bar-fill');
+  if (!dispEl) return;
+  dispEl.textContent=m+':'+(s<10?'0':'')+s;
+  var pct = restSecondsMax > 0 ? (restSecondsLeft/restSecondsMax)*100 : 0;
+  barFill.style.width=pct+'%';
   var color=pct>50?'var(--green)':pct>25?'var(--warm)':'var(--red)';
-  document.getElementById('rest-bar-fill').style.background=color;
-  document.getElementById('rest-display').style.color=color;
+  barFill.style.background=color;
+  dispEl.style.color=color;
 }
 
 function skipRest() {
   if (restTimerInterval) clearInterval(restTimerInterval);
-  document.getElementById('rest-timer-bar').style.display='none';
+  restTimerInterval = null;
+  restEndTime = null;
+  saveState();
+  var bar = document.getElementById('rest-timer-bar');
+  if (bar) bar.style.display='none';
 }
+
+// Re-sync timer display when page becomes visible again (after background)
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && restEndTime) {
+    var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+    if (remaining <= 0) {
+      skipRest();
+      showToast('Recupero terminato! 💪');
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    } else {
+      restSecondsLeft = remaining;
+      updateRestDisplay();
+      document.getElementById('rest-timer-bar').style.display = 'flex';
+    }
+  }
+});
 
 function finishSession() {
   if (!state.activeSession) return;
@@ -1482,21 +1697,33 @@ function confirmFinishSession() {
     totalVolume+=vol; totalSets+=workSets.length;
     return {exerciseId:ex.config.exerciseId, sets:workSets, volume:vol, notes:ex.config.notes||''};
   });
-  // Apply increments to template
-  if (state.activeSession.templateIdx!==null) {
+  // Apply actual performed values + increments to template
+  if (state.activeSession.templateIdx !== null) {
     var tpl = state.templates[state.activeSession.templateIdx];
-    if (tpl) state.activeSession.exercises.forEach(function(sexe,i){
-      var cfg=tpl.exercises[i]; if(!cfg)return;
-      var inc=sexe.config.increments; if(!inc)return;
-      if(inc.weight) cfg.weight=Math.max(0,Math.round((cfg.weight+inc.weight)*10)/10);
-      if(inc.sets) cfg.sets=Math.max(1,cfg.sets+inc.sets);
-      if(inc.reps) cfg.reps=Math.max(1,cfg.reps+inc.reps);
-      cfg.increments={weight:inc.weight,sets:inc.sets,reps:inc.reps};
+    if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
+      var cfg = tpl.exercises[i]; if (!cfg) return;
+      var inc = sexe.config.increments || {weight:0,sets:0,reps:0};
+      // Use last performed work set values as the new base
+      var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
+      if (workSets.length) {
+        // Use max weight and most common reps from performed sets as new base
+        var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
+        var lastSet = workSets[workSets.length-1];
+        cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
+        cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
+        cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
+      } else {
+        // No sets done: just apply increments to existing values
+        if (inc.weight) cfg.weight = Math.max(0, Math.round((cfg.weight + inc.weight) * 10) / 10);
+        if (inc.sets) cfg.sets = Math.max(1, cfg.sets + inc.sets);
+        if (inc.reps) cfg.reps = Math.max(1, cfg.reps + inc.reps);
+      }
+      cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
     });
   }
   state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets});
-  saveState();
   state.activeSession=null;
+  saveState();
   showToast('Sessione salvata!');
   showPage('home');
 }
@@ -1850,6 +2077,7 @@ function saveRetroSession() {
 // INIT
 // ============================================================
 loadState();
+resumeSessionTimerIfActive();
 if (!state.templates.length) {
   state.templates = [
     {name:'Push A',color:'#e8ff47',notes:'Petto, spalle, tricipiti',exercises:[
@@ -1875,7 +2103,12 @@ if (!state.templates.length) {
   ];
   saveState();
 }
-renderHome();
+// If a session was in progress when page was closed, go straight to it
+if (state.activeSession) {
+  showPage('allenamento');
+} else {
+  renderHome();
+}
 </script>
 </body>
 </html>
