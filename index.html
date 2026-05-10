@@ -1761,7 +1761,7 @@ function confirmFinishSession() {
       cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
     });
   }
-  state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets});
+  state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx});
   state.activeSession=null;
   saveState();
   showToast('Sessione salvata!');
@@ -1847,6 +1847,12 @@ function getMuscleDistribution() {
 function showSessionDetail(idx) {
   var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  // Build a map of exerciseId -> increments from the linked template (fallback for old sessions)
+  var tplIncMap = {};
+  if (s.templateIdx != null) {
+    var tpl = state.templates[s.templateIdx];
+    if (tpl) tpl.exercises.forEach(function(te){ tplIncMap[te.exerciseId] = te.increments; });
+  }
   document.getElementById('session-detail-content').innerHTML =
     '<div class="modal-title">'+s.name+'</div>'+
     '<div style="font-size:13px;color:var(--accent);margin-bottom:16px">'+date+'</div>'+
@@ -1856,7 +1862,8 @@ function showSessionDetail(idx) {
     '<div class="stat-box"><div class="stat-box-val">'+(s.totalSets||0)+'</div><div class="stat-box-lbl">Serie</div></div></div>'+
     (s.exercises||[]).map(function(e){
       var ex=findExercise(e.exerciseId);if(!ex)return'';
-      var inc = e.increments || {weight:0,sets:0,reps:0};
+      // Use saved increments, or fall back to current template value, or nothing
+      var inc = e.increments || tplIncMap[e.exerciseId] || {weight:0,sets:0,reps:0};
       var incParts = [];
       if (inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
       if (inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
