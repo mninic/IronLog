@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="IronLog">
@@ -230,7 +230,6 @@ select.input{appearance:none}
           <div style="font-size:13px;color:var(--text2)" id="session-name-display">Allenamento</div>
         </div>
         <div class="flex gap-8">
-          <button class="btn btn-sm btn-secondary" onclick="addExerciseToSession()">+ Esercizio</button>
           <button class="btn btn-sm btn-danger" onclick="finishSession()">Fine</button>
         </div>
       </div>
@@ -289,16 +288,6 @@ select.input{appearance:none}
   <div class="card">
     <div class="card-title">Record personali (1RM stimato)</div>
     <div id="pr-list"></div>
-  </div>
-  <div class="card">
-    <div class="card-title">Statistiche per esercizio</div>
-    <select class="input mb-8" id="exercise-progress-select" onchange="renderExerciseStats()">
-      <option value="">Seleziona esercizio...</option>
-    </select>
-    <div id="exercise-stats-wrap" style="display:none">
-      <div class="flex gap-8 mb-12" id="ex-stat-boxes" style="flex-wrap:wrap"></div>
-      <div class="chart-container"><canvas id="chart-exercise"></canvas></div>
-    </div>
   </div>
   <div class="card">
     <div class="card-title">Impostazioni</div>
@@ -413,9 +402,9 @@ select.input{appearance:none}
     <div class="divider"></div>
     <div class="flex justify-between items-center mb-12">
       <div class="font-bold">Esercizi <span id="tpl-ex-count" style="color:var(--accent)">0</span></div>
-      <button class="btn btn-sm btn-secondary" onclick="openExercisePicker('template')">+ Aggiungi</button>
     </div>
     <div id="tpl-exercise-list"></div>
+    <button class="btn btn-secondary btn-full" style="margin-bottom:14px" onclick="openExercisePicker('template')">+ Aggiungi esercizio</button>
     <div class="divider"></div>
     <div class="flex gap-8">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-template')">Annulla</button>
@@ -426,17 +415,23 @@ select.input{appearance:none}
 
 <!-- MODAL: Exercise Picker -->
 <div class="modal-overlay" id="modal-exercise-picker">
-  <div class="modal">
+  <div class="modal" style="display:flex;flex-direction:column;max-height:92dvh;padding-bottom:0">
     <div class="modal-handle"></div>
-    <div class="modal-title">Scegli esercizio</div>
-    <div class="search-bar" style="margin:0 0 12px">
-      <span style="color:var(--text3)">🔍</span>
-      <input type="text" placeholder="Cerca esercizio..." id="exercise-search" oninput="filterExercises()">
+    <div class="modal-title" style="flex-shrink:0">Scegli esercizio</div>
+    <!-- Sticky search + filter — stays visible when keyboard opens -->
+    <div style="flex-shrink:0;background:var(--bg2);padding-bottom:10px;position:sticky;top:0;z-index:2">
+      <div class="search-bar" style="margin:0 0 10px">
+        <span style="color:var(--text3)">🔍</span>
+        <input type="text" placeholder="Cerca esercizio..." id="exercise-search" oninput="filterExercises()" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="chip-row" id="muscle-filter-chips" style="overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px"></div>
     </div>
-    <div class="chip-row mb-12" id="muscle-filter-chips" style="margin-bottom:12px;overflow-x:auto;flex-wrap:nowrap"></div>
-    <div id="exercise-picker-list"></div>
-    <div class="divider"></div>
-    <button class="btn btn-secondary btn-full" onclick="openCreateCustomExercise()">+ Crea esercizio personalizzato</button>
+    <!-- Scrollable list -->
+    <div id="exercise-picker-list" style="flex:1;overflow-y:auto;padding-bottom:8px"></div>
+    <div class="divider" style="flex-shrink:0;margin:0"></div>
+    <div style="flex-shrink:0;padding:12px 0 calc(20px + var(--safe-bot))">
+      <button class="btn btn-secondary btn-full" onclick="openCreateCustomExercise()">+ Crea esercizio personalizzato</button>
+    </div>
   </div>
 </div>
 
@@ -1562,7 +1557,10 @@ function renderSessionExercises() {
       '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
       (ex.config.notes?'<div class="ex-note-bar">'+ex.config.notes+'</div>':'<div style="border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius)"></div>')+
       '</div>';
-  }).join('');
+  }).join('')+
+  '<div style="padding:0 16px 8px">'+
+    '<button class="btn btn-secondary btn-full" onclick="addExerciseToSession()">+ Aggiungi esercizio</button>'+
+  '</div>';
 }
 
 function updateSet(exIdx,setIdx,field,value) {
@@ -1779,19 +1777,18 @@ function confirmFinishSession() {
 // ============================================================
 // STORICO
 // ============================================================
-var chartVolume=null, chartExercise=null;
+var chartVolume=null;
 
 function renderStorico() {
   var wAll=getAllWeeksVolume();
   if (chartVolume) chartVolume.destroy();
-  // Make canvas wider when there are many weeks so bars don't squish
   var canvasEl = document.getElementById('chart-volume');
-  var minWidth = Math.max(canvasEl.parentElement.clientWidth, wAll.labels.length * 36);
-  canvasEl.style.width = minWidth + 'px';
-  canvasEl.style.minWidth = minWidth + 'px';
+  canvasEl.style.width = '';
+  canvasEl.style.minWidth = '';
   chartVolume = new Chart(canvasEl.getContext('2d'),{
-    type:'bar',data:{labels:wAll.labels,datasets:[{data:wAll.values,backgroundColor:'rgba(232,255,71,0.3)',borderColor:'#e8ff47',borderWidth:2,borderRadius:6}]},
-    options:{responsive:false,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
+    type:'line',
+    data:{labels:wAll.labels,datasets:[{data:wAll.values,borderColor:'#e8ff47',backgroundColor:'rgba(232,255,71,0.08)',borderWidth:2,fill:true,tension:0.4,pointBackgroundColor:'#e8ff47',pointRadius:wAll.labels.length>20?2:4,pointHoverRadius:6}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return (ctx.raw/1000).toFixed(1)+'t';}}}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#666',font:{size:10},maxTicksLimit:12,maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#666',font:{size:10},callback:function(v){return (v/1000).toFixed(1)+'t';}},beginAtZero:true}}}
   });
   var dist=getMuscleDistribution();
   var maxD=Math.max.apply(null,Object.values(dist).concat([1]));
@@ -1932,10 +1929,6 @@ function renderProfilo() {
       '<div style="text-align:right"><div style="font-size:24px;font-weight:900;color:var(--accent)">'+pr.weight+'kg</div>'+
       '<div style="font-size:11px;color:var(--text2)">'+pr.reps+' rip · 1RM ~'+pr.est1rm.toFixed(1)+'kg</div></div></div>';
   }).join('')||'<div style="color:var(--text3);font-size:13px">Nessun dato disponibile</div>';
-  var exIds=getExercisesWithHistory();
-  var sel=document.getElementById('exercise-progress-select');
-  sel.innerHTML='<option value="">Seleziona esercizio...</option>'+exIds.map(function(id){var ex=findExercise(id);return ex?'<option value="'+id+'">'+ex.name+'</option>':'';}).join('');
-  document.getElementById('exercise-stats-wrap').style.display='none';
 }
 
 function calcPRs() {
@@ -1948,34 +1941,6 @@ function getExercisesWithHistory() {
   var ids=new Set();
   state.sessions.forEach(function(s){(s.exercises||[]).forEach(function(e){ids.add(e.exerciseId);});});
   return Array.from(ids);
-}
-
-function renderExerciseStats() {
-  var exId=document.getElementById('exercise-progress-select').value;
-  var wrap=document.getElementById('exercise-stats-wrap');
-  if (!exId){wrap.style.display='none';return;}
-  wrap.style.display='block';
-  var dataPoints=[], totalSessions=0, totalSets=0, totalVolume=0, maxWeight=0;
-  state.sessions.forEach(function(s){
-    var e=(s.exercises||[]).find(function(e){return e.exerciseId===exId;});
-    if(!e||!e.sets||!e.sets.length)return;
-    totalSessions++;totalSets+=e.sets.length;
-    var vol=e.sets.reduce(function(a,s){return a+(s.weight*s.reps);},0);totalVolume+=vol;
-    var mx=Math.max.apply(null,e.sets.map(function(s){return s.weight;}));
-    if(mx>maxWeight)maxWeight=mx;
-    dataPoints.push({label:new Date(s.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'}),maxW:mx,vol:vol});
-  });
-  document.getElementById('ex-stat-boxes').innerHTML=
-    '<div class="stat-box"><div class="stat-box-val">'+totalSessions+'</div><div class="stat-box-lbl">Sessioni</div></div>'+
-    '<div class="stat-box"><div class="stat-box-val">'+maxWeight+'kg</div><div class="stat-box-lbl">Max peso</div></div>'+
-    '<div class="stat-box"><div class="stat-box-val">'+(totalVolume/1000).toFixed(1)+'t</div><div class="stat-box-lbl">Vol. totale</div></div>'+
-    '<div class="stat-box"><div class="stat-box-val">'+totalSets+'</div><div class="stat-box-lbl">Serie tot.</div></div>';
-  if (chartExercise) chartExercise.destroy();
-  chartExercise = new Chart(document.getElementById('chart-exercise').getContext('2d'),{
-    type:'line',
-    data:{labels:dataPoints.map(function(d){return d.label;}),datasets:[{label:'Peso max',data:dataPoints.map(function(d){return d.maxW;}),borderColor:'#e8ff47',backgroundColor:'rgba(232,255,71,0.1)',borderWidth:2,fill:true,tension:0.4,pointBackgroundColor:'#e8ff47',pointRadius:4}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
-  });
 }
 
 function selectUnit(unit, el) {
