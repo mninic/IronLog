@@ -2042,14 +2042,31 @@ function editCurrentSession() {
   var s = state.sessions[currentDetailIdx];
   editingSessionIdx = currentDetailIdx;
   retroMuscleFilter = '';
-  // Convert saved exercises back to retro format
+  // Convert saved exercises back to retro format, recovering increments with same fallback as showSessionDetail
   retroExercises = (s.exercises||[]).map(function(e){
+    // 1) saved on exercise
+    var inc = (e.increments && (e.increments.weight||e.increments.sets||e.increments.reps)) ? e.increments : null;
+    // 2) linked template
+    if (!inc && s.templateIdx != null) {
+      var tpl = state.templates[s.templateIdx];
+      if (tpl) {
+        var te = tpl.exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
+        if (te && te.increments && (te.increments.weight||te.increments.sets||te.increments.reps)) inc = te.increments;
+      }
+    }
+    // 3) any template
+    if (!inc) {
+      for (var t=0; t<state.templates.length; t++) {
+        var te = state.templates[t].exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
+        if (te && te.increments && (te.increments.weight||te.increments.sets||te.increments.reps)) { inc = te.increments; break; }
+      }
+    }
     return {
       exerciseId: e.exerciseId,
       sets: (e.sets||[]).map(function(set){
         return {weight: set.weight||0, reps: set.reps||0, rpe: set.rpe||''};
       }),
-      increments: e.increments ? {weight:e.increments.weight||0,sets:e.increments.sets||0,reps:e.increments.reps||0} : {weight:0,sets:0,reps:0}
+      increments: inc ? {weight:inc.weight||0, sets:inc.sets||0, reps:inc.reps||0} : {weight:0,sets:0,reps:0}
     };
   });
   // Fill form fields
