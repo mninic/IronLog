@@ -1279,9 +1279,9 @@ function selectExercise(exId) {
   closeModal('modal-exercise-picker');
   pendingExerciseId = exId;
   configExerciseIdx = null;
-  // Pre-fill with last session data if available
+  // Pre-fill with last session data if available (template and session modes)
   var last = getLastSessionDataForExercise(exId);
-  if (last && pickerMode === 'session') {
+  if (last) {
     openExerciseConfig(exId, {sets:last.sets, reps:last.reps, weight:last.weight, rest:120, rpe:'', notes:'', warmup:0, increments:last.increments});
   } else {
     openExerciseConfig(exId, null);
