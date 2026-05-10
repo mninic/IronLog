@@ -1279,7 +1279,13 @@ function selectExercise(exId) {
   closeModal('modal-exercise-picker');
   pendingExerciseId = exId;
   configExerciseIdx = null;
-  openExerciseConfig(exId, null);
+  // Pre-fill with last session data if available
+  var last = getLastSessionDataForExercise(exId);
+  if (last && pickerMode === 'session') {
+    openExerciseConfig(exId, {sets:last.sets, reps:last.reps, weight:last.weight, rest:120, rpe:'', notes:'', warmup:0, increments:last.increments});
+  } else {
+    openExerciseConfig(exId, null);
+  }
 }
 
 function configureTemplateExercise(idx) {
@@ -1425,12 +1431,40 @@ function renderAllenamento() {
   }
 }
 
+// Returns {sets, reps, weight, increments} from the most recent session containing exId
+function getLastSessionDataForExercise(exId) {
+  for (var i = state.sessions.length - 1; i >= 0; i--) {
+    var s = state.sessions[i];
+    var e = (s.exercises||[]).find(function(e){ return e.exerciseId === exId; });
+    if (e && e.sets && e.sets.length) {
+      var maxW = Math.max.apply(null, e.sets.map(function(s){ return s.weight||0; }));
+      var lastSet = e.sets[e.sets.length-1];
+      return {
+        sets: e.sets.length,
+        reps: lastSet.reps || 10,
+        weight: maxW,
+        increments: e.increments || {weight:0,sets:0,reps:0}
+      };
+    }
+  }
+  return null;
+}
+
 function buildSessionExercise(cfg) {
   var ex = findExercise(cfg.exerciseId);
+  // Merge with last session data for this exercise (takes priority over template values)
+  var last = getLastSessionDataForExercise(cfg.exerciseId);
+  var effectiveCfg = Object.assign({}, cfg);
+  if (last) {
+    effectiveCfg.weight = last.weight;
+    effectiveCfg.reps = last.reps;
+    effectiveCfg.sets = last.sets;
+    // Keep increments from cfg (template/session config), not from history
+  }
   var sets = [];
-  for (var i=0;i<(cfg.warmup||0);i++) sets.push({type:'warmup',reps:Math.round((cfg.reps||10)*0.6),weight:Math.round((cfg.weight||0)*0.5),rpe:'',done:false});
-  for (var j=0;j<cfg.sets;j++) sets.push({type:'work',reps:cfg.reps,weight:cfg.weight,rpe:cfg.rpe||'',done:false});
-  return {config:cfg, ex:ex, sets:sets};
+  for (var i=0;i<(effectiveCfg.warmup||0);i++) sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*0.5),rpe:'',done:false});
+  for (var j=0;j<effectiveCfg.sets;j++) sets.push({type:'work',reps:effectiveCfg.reps,weight:effectiveCfg.weight,rpe:effectiveCfg.rpe||'',done:false});
+  return {config:effectiveCfg, ex:ex, sets:sets};
 }
 
 function startSessionFromTemplate(idx) {
@@ -1695,7 +1729,13 @@ function confirmFinishSession() {
     var workSets=ex.sets.filter(function(s){return s.type==='work'&&s.done;});
     var vol=workSets.reduce(function(a,s){return a+(s.weight*s.reps);},0);
     totalVolume+=vol; totalSets+=workSets.length;
-    return {exerciseId:ex.config.exerciseId, sets:workSets, volume:vol, notes:ex.config.notes||''};
+    return {
+      exerciseId: ex.config.exerciseId,
+      sets: workSets,
+      volume: vol,
+      notes: ex.config.notes||'',
+      increments: ex.config.increments || {weight:0,sets:0,reps:0}
+    };
   });
   // Apply actual performed values + increments to template
   if (state.activeSession.templateIdx !== null) {
@@ -1816,10 +1856,19 @@ function showSessionDetail(idx) {
     '<div class="stat-box"><div class="stat-box-val">'+(s.totalSets||0)+'</div><div class="stat-box-lbl">Serie</div></div></div>'+
     (s.exercises||[]).map(function(e){
       var ex=findExercise(e.exerciseId);if(!ex)return'';
-      return '<div style="margin-bottom:14px">'+
-        '<div class="font-bold" style="margin-bottom:4px">'+ex.icon+' '+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg</span>':'')+'</div>'+
-        (e.sets||[]).map(function(set,i){return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+set.weight+'kg x '+set.reps+' rip'+(set.rpe?' RPE '+set.rpe:'')+'</div>';}).join('')+
-        (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">'+e.notes+'</div>':'')+
+      var inc = e.increments || {weight:0,sets:0,reps:0};
+      var incParts = [];
+      if (inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
+      if (inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
+      if (inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
+      var incHtml = incParts.length
+        ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
+        : '';
+      return '<div style="margin-bottom:16px">'+
+        '<div class="font-bold" style="margin-bottom:4px">'+ex.icon+' '+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
+        (e.sets||[]).map(function(set,i){return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+set.weight+'kg × '+set.reps+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';}).join('')+
+        (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 '+e.notes+'</div>':'')+
+        incHtml+
         '</div>';
     }).join('')+
     '<button class="btn btn-danger btn-sm" style="margin-top:12px" onclick="deleteSession('+idx+')">Elimina sessione</button>';
