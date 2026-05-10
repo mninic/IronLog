@@ -1279,12 +1279,17 @@ function selectExercise(exId) {
   closeModal('modal-exercise-picker');
   pendingExerciseId = exId;
   configExerciseIdx = null;
-  // Pre-fill with last session data if available (template and session modes)
+  // Open config normally (notes, rest, rpe, warmup all editable)
+  openExerciseConfig(exId, null);
+  // Then overwrite only the numeric fields with last session data if available
   var last = getLastSessionDataForExercise(exId);
   if (last) {
-    openExerciseConfig(exId, {sets:last.sets, reps:last.reps, weight:last.weight, rest:120, rpe:'', notes:'', warmup:0, increments:last.increments});
-  } else {
-    openExerciseConfig(exId, null);
+    document.getElementById('cfg-sets').value = last.sets;
+    document.getElementById('cfg-reps').value = last.reps;
+    document.getElementById('cfg-weight').value = last.weight;
+    // Also restore increments
+    increments = {weight: last.increments.weight||0, sets: last.increments.sets||0, reps: last.increments.reps||0};
+    updateIncrementDisplay();
   }
 }
 
@@ -1847,11 +1852,23 @@ function getMuscleDistribution() {
 function showSessionDetail(idx) {
   var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  // Build a map of exerciseId -> increments from the linked template (fallback for old sessions)
-  var tplIncMap = {};
-  if (s.templateIdx != null) {
-    var tpl = state.templates[s.templateIdx];
-    if (tpl) tpl.exercises.forEach(function(te){ tplIncMap[te.exerciseId] = te.increments; });
+  // Build a map exerciseId -> increments searching: 1) saved on exercise, 2) linked template, 3) any template
+  function getInc(exId, savedInc) {
+    if (savedInc && (savedInc.weight || savedInc.sets || savedInc.reps)) return savedInc;
+    // Try linked template first
+    if (s.templateIdx != null) {
+      var tpl = state.templates[s.templateIdx];
+      if (tpl) {
+        var te = tpl.exercises.find(function(e){ return e.exerciseId === exId; });
+        if (te && te.increments && (te.increments.weight || te.increments.sets || te.increments.reps)) return te.increments;
+      }
+    }
+    // Fallback: search all templates
+    for (var t=0; t<state.templates.length; t++) {
+      var te = state.templates[t].exercises.find(function(e){ return e.exerciseId === exId; });
+      if (te && te.increments && (te.increments.weight || te.increments.sets || te.increments.reps)) return te.increments;
+    }
+    return null;
   }
   document.getElementById('session-detail-content').innerHTML =
     '<div class="modal-title">'+s.name+'</div>'+
@@ -1862,12 +1879,11 @@ function showSessionDetail(idx) {
     '<div class="stat-box"><div class="stat-box-val">'+(s.totalSets||0)+'</div><div class="stat-box-lbl">Serie</div></div></div>'+
     (s.exercises||[]).map(function(e){
       var ex=findExercise(e.exerciseId);if(!ex)return'';
-      // Use saved increments, or fall back to current template value, or nothing
-      var inc = e.increments || tplIncMap[e.exerciseId] || {weight:0,sets:0,reps:0};
+      var inc = getInc(e.exerciseId, e.increments);
       var incParts = [];
-      if (inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
-      if (inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
-      if (inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
+      if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
+      if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
+      if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
