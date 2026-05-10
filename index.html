@@ -2048,7 +2048,8 @@ function editCurrentSession() {
       exerciseId: e.exerciseId,
       sets: (e.sets||[]).map(function(set){
         return {weight: set.weight||0, reps: set.reps||0, rpe: set.rpe||''};
-      })
+      }),
+      increments: e.increments ? {weight:e.increments.weight||0,sets:e.increments.sets||0,reps:e.increments.reps||0} : {weight:0,sets:0,reps:0}
     };
   });
   // Fill form fields
@@ -2068,9 +2069,11 @@ function renderRetroExerciseList() {
   document.getElementById('retro-exercise-list').innerHTML = retroExercises.map(function(re, idx) {
     var ex = findExercise(re.exerciseId);
     var name = ex ? (ex.icon+' '+ex.name) : re.exerciseId;
+    var inc = re.increments || {weight:0,sets:0,reps:0};
+
     var setsHtml = re.sets.map(function(s, si) {
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
-        '<span style="font-size:12px;color:var(--text3);min-width:20px">'+( si+1)+'</span>'+
+        '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+s.weight+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="rip" value="'+s.reps+'" oninput="updateRetroSet('+idx+','+si+',\'reps\',this.value)" min="1">'+
         '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
@@ -2079,15 +2082,64 @@ function renderRetroExerciseList() {
         '<button class="btn btn-xs btn-danger btn-icon" onclick="removeRetroSet('+idx+','+si+')">✕</button>'+
       '</div>';
     }).join('');
+
+    function incBtn(field, delta) {
+      var v = inc[field] + delta;
+      return 'updateRetroIncrement('+idx+',\''+field+'\','+delta+')';
+    }
+    function incLabel(v) { return (v>0?'+':'')+v; }
+    function incClass(v) { return v>0?'color:var(--green)':v<0?'color:var(--red)':'color:var(--text3)'; }
+
+    var incHtml =
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'+
+      '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Progressione prossimo allenamento</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+        // weight
+        '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',-0.5)">−</button>'+
+          '<div style="text-align:center;min-width:36px">'+
+            '<div style="font-size:14px;font-weight:900;'+incClass(inc.weight)+'">'+incLabel(inc.weight)+'</div>'+
+            '<div style="font-size:9px;color:var(--text3)">kg</div>'+
+          '</div>'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',0.5)">+</button>'+
+        '</div>'+
+        // sets
+        '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',-1)">−</button>'+
+          '<div style="text-align:center;min-width:36px">'+
+            '<div style="font-size:14px;font-weight:900;'+incClass(inc.sets)+'">'+incLabel(inc.sets)+'</div>'+
+            '<div style="font-size:9px;color:var(--text3)">serie</div>'+
+          '</div>'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',1)">+</button>'+
+        '</div>'+
+        // reps
+        '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'reps\',-1)">−</button>'+
+          '<div style="text-align:center;min-width:36px">'+
+            '<div style="font-size:14px;font-weight:900;'+incClass(inc.reps)+'">'+incLabel(inc.reps)+'</div>'+
+            '<div style="font-size:9px;color:var(--text3)">rip</div>'+
+          '</div>'+
+          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'reps\',1)">+</button>'+
+        '</div>'+
+      '</div>'+
+      '</div>';
+
     return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">'+
-      '<div class="flex justify-between items-center" style="margin-bottom:8px">'+
-        '<div class="font-bold" style="font-size:14px">'+name+'</div>'+
+      // Header: reorder + name + actions
+      '<div class="flex items-center gap-8" style="margin-bottom:8px">'+
+        '<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">'+
+          '<button class="btn btn-xs btn-ghost" style="padding:1px 5px;font-size:14px;line-height:1" onclick="moveRetroExercise('+idx+',-1)" '+(idx===0?'disabled':'')+'>▲</button>'+
+          '<button class="btn btn-xs btn-ghost" style="padding:1px 5px;font-size:14px;line-height:1" onclick="moveRetroExercise('+idx+',1)" '+(idx===retroExercises.length-1?'disabled':'')+'>▼</button>'+
+        '</div>'+
+        '<div class="font-bold" style="font-size:14px;flex:1">'+name+'</div>'+
         '<div class="flex gap-8">'+
           '<button class="btn btn-xs btn-secondary" onclick="addRetroSet('+idx+')">+ Serie</button>'+
           '<button class="btn btn-xs btn-danger" onclick="removeRetroExercise('+idx+')">Rimuovi</button>'+
         '</div>'+
       '</div>'+
+      // Sets header
       '<div class="flex gap-8" style="margin-bottom:6px">'+
+        '<span style="min-width:24px"></span>'+/* space for reorder */
         '<span style="font-size:10px;color:var(--text3);min-width:20px"></span>'+
         '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
         '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RIP</span>'+
@@ -2095,8 +2147,25 @@ function renderRetroExerciseList() {
         '<span style="width:34px"></span>'+
       '</div>'+
       setsHtml+
+      incHtml+
     '</div>';
   }).join('') || '<div style="color:var(--text3);font-size:13px;text-align:center;padding:12px">Aggiungi esercizi per iniziare</div>';
+}
+
+function moveRetroExercise(idx, dir) {
+  var newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= retroExercises.length) return;
+  var tmp = retroExercises[idx];
+  retroExercises[idx] = retroExercises[newIdx];
+  retroExercises[newIdx] = tmp;
+  renderRetroExerciseList();
+}
+
+function updateRetroIncrement(exIdx, field, delta) {
+  if (!retroExercises[exIdx].increments) retroExercises[exIdx].increments = {weight:0,sets:0,reps:0};
+  var inc = retroExercises[exIdx].increments;
+  inc[field] = Math.round((inc[field] + delta) * 10) / 10;
+  renderRetroExerciseList();
 }
 
 function addRetroExercise() {
@@ -2131,7 +2200,7 @@ function filterRetroExercises() {
 }
 
 function pickRetroExercise(exId) {
-  retroExercises.push({exerciseId: exId, sets:[{weight:0,reps:10,rpe:''}]});
+  retroExercises.push({exerciseId: exId, sets:[{weight:0,reps:10,rpe:''}], increments:{weight:0,sets:0,reps:0}});
   closeModal('modal-retro-ex-picker');
   renderRetroExerciseList();
 }
@@ -2168,7 +2237,13 @@ function saveRetroSession() {
   var exercises = retroExercises.map(function(re){
     var vol = re.sets.reduce(function(a,s){return a+(s.weight*s.reps);},0);
     totalVolume += vol; totalSets += re.sets.length;
-    return {exerciseId: re.exerciseId, sets: re.sets.map(function(s){return {weight:s.weight,reps:s.reps,rpe:s.rpe,type:'work',done:true};}), volume: vol, notes:''};
+    return {
+      exerciseId: re.exerciseId,
+      sets: re.sets.map(function(s){return {weight:s.weight,reps:s.reps,rpe:s.rpe,type:'work',done:true};}),
+      volume: vol,
+      notes: '',
+      increments: re.increments || {weight:0,sets:0,reps:0}
+    };
   });
 
   if (editingSessionIdx !== null) {
