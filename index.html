@@ -557,7 +557,10 @@ select.input{appearance:none}
   <div class="modal">
     <div class="modal-handle"></div>
     <div id="session-detail-content"></div>
-    <button class="btn btn-secondary btn-full mt-12" onclick="closeModal('modal-session-detail')">Chiudi</button>
+    <div class="flex gap-8 mt-12">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-session-detail')">Chiudi</button>
+      <button class="btn btn-primary" style="flex:1" id="btn-edit-session" onclick="editCurrentSession()">✏️ Modifica</button>
+    </div>
   </div>
 </div>
 
@@ -1850,6 +1853,7 @@ function getMuscleDistribution() {
 }
 
 function showSessionDetail(idx) {
+  currentDetailIdx = idx;
   var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   // Build a map exerciseId -> increments searching: 1) saved on exercise, 2) linked template, 3) any template
@@ -2015,16 +2019,47 @@ function fmtDuration(sec){if(!sec)return'0min';var m=Math.floor(sec/60);if(m<60)
 // ============================================================
 var retroExercises = []; // [{exerciseId, sets:[{weight,reps,rpe}]}]
 var retroMuscleFilter = '';
+var editingSessionIdx = null; // null = new retro, number = editing existing session
 
 function openRetroModal() {
+  editingSessionIdx = null;
   retroExercises = [];
   retroMuscleFilter = '';
-  // Default date = today
   var today = new Date().toISOString().split('T')[0];
   document.getElementById('retro-date').value = today;
   document.getElementById('retro-name').value = '';
   document.getElementById('retro-duration').value = '';
+  document.querySelector('#modal-retro .modal-title').textContent = 'Sessione retroattiva';
+  document.querySelector('#modal-retro .btn-primary').textContent = 'Salva sessione';
   renderRetroExerciseList();
+  openModal('modal-retro');
+}
+
+// Called from the session detail modal "Modifica" button
+var currentDetailIdx = null;
+function editCurrentSession() {
+  if (currentDetailIdx === null) return;
+  var s = state.sessions[currentDetailIdx];
+  editingSessionIdx = currentDetailIdx;
+  retroMuscleFilter = '';
+  // Convert saved exercises back to retro format
+  retroExercises = (s.exercises||[]).map(function(e){
+    return {
+      exerciseId: e.exerciseId,
+      sets: (e.sets||[]).map(function(set){
+        return {weight: set.weight||0, reps: set.reps||0, rpe: set.rpe||''};
+      })
+    };
+  });
+  // Fill form fields
+  var dateStr = new Date(s.date).toISOString().split('T')[0];
+  document.getElementById('retro-date').value = dateStr;
+  document.getElementById('retro-name').value = s.name||'';
+  document.getElementById('retro-duration').value = s.duration ? Math.round(s.duration/60) : '';
+  document.querySelector('#modal-retro .modal-title').textContent = 'Modifica sessione';
+  document.querySelector('#modal-retro .btn-primary').textContent = 'Salva modifiche';
+  renderRetroExerciseList();
+  closeModal('modal-session-detail');
   openModal('modal-retro');
 }
 
@@ -2135,14 +2170,33 @@ function saveRetroSession() {
     totalVolume += vol; totalSets += re.sets.length;
     return {exerciseId: re.exerciseId, sets: re.sets.map(function(s){return {weight:s.weight,reps:s.reps,rpe:s.rpe,type:'work',done:true};}), volume: vol, notes:''};
   });
-  // Insert in chronological order
-  var newSession = {date: new Date(date).toISOString(), name:name, duration:durMin*60, exercises:exercises, totalVolume:totalVolume, totalSets:totalSets, retro:true};
-  state.sessions.push(newSession);
-  state.sessions.sort(function(a,b){return new Date(a.date)-new Date(b.date);});
-  saveState();
-  closeModal('modal-retro');
-  renderStorico();
-  showToast('Sessione aggiunta!');
+
+  if (editingSessionIdx !== null) {
+    // Update existing session, preserve fields we don't edit (templateIdx, retro flag, etc.)
+    var existing = state.sessions[editingSessionIdx];
+    state.sessions[editingSessionIdx] = Object.assign({}, existing, {
+      name: name,
+      date: new Date(date).toISOString(),
+      duration: durMin*60,
+      exercises: exercises,
+      totalVolume: totalVolume,
+      totalSets: totalSets
+    });
+    state.sessions.sort(function(a,b){return new Date(a.date)-new Date(b.date);});
+    saveState();
+    closeModal('modal-retro');
+    renderStorico();
+    showToast('Sessione aggiornata!');
+  } else {
+    var newSession = {date: new Date(date).toISOString(), name:name, duration:durMin*60, exercises:exercises, totalVolume:totalVolume, totalSets:totalSets, retro:true};
+    state.sessions.push(newSession);
+    state.sessions.sort(function(a,b){return new Date(a.date)-new Date(b.date);});
+    saveState();
+    closeModal('modal-retro');
+    renderStorico();
+    showToast('Sessione aggiunta!');
+  }
+  editingSessionIdx = null;
 }
 
 // ============================================================
