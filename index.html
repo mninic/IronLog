@@ -287,7 +287,10 @@ select.input{appearance:none}
   </div>
   <div class="card">
     <div class="card-title">Record personali (1RM stimato)</div>
-    <div id="pr-list"></div>
+    <select class="input" id="pr-select" onchange="renderPRDetail()" style="margin-bottom:12px">
+      <option value="">Scegli un esercizio...</option>
+    </select>
+    <div id="pr-detail"></div>
   </div>
   <div class="card">
     <div class="card-title">Impostazioni</div>
@@ -579,9 +582,9 @@ select.input{appearance:none}
     <div class="divider"></div>
     <div class="flex justify-between items-center mb-12">
       <div class="font-bold">Esercizi <span id="retro-ex-count" style="color:var(--accent)">0</span></div>
-      <button class="btn btn-sm btn-secondary" onclick="addRetroExercise()">+ Aggiungi</button>
     </div>
     <div id="retro-exercise-list"></div>
+    <div id="retro-add-btn-wrapper"></div>
     <div class="divider"></div>
     <div class="flex gap-8">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-retro')">Annulla</button>
@@ -592,15 +595,17 @@ select.input{appearance:none}
 
 <!-- MODAL: Retro Exercise Picker -->
 <div class="modal-overlay" id="modal-retro-ex-picker">
-  <div class="modal">
+  <div class="modal" style="display:flex;flex-direction:column;max-height:92dvh;padding-bottom:0">
     <div class="modal-handle"></div>
-    <div class="modal-title">Scegli esercizio</div>
-    <div class="search-bar" style="margin:0 0 12px">
-      <span style="color:var(--text3)">🔍</span>
-      <input type="text" placeholder="Cerca esercizio..." id="retro-ex-search" oninput="filterRetroExercises()">
+    <div class="modal-title" style="flex-shrink:0">Scegli esercizio</div>
+    <div style="flex-shrink:0;background:var(--bg2);padding-bottom:10px">
+      <div class="search-bar" style="margin:0 0 10px">
+        <span style="color:var(--text3)">🔍</span>
+        <input type="text" placeholder="Cerca esercizio..." id="retro-ex-search" oninput="filterRetroExercises()" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="chip-row" id="retro-muscle-filter-chips" style="overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px"></div>
     </div>
-    <div class="chip-row mb-12" id="retro-muscle-filter-chips" style="margin-bottom:12px;overflow-x:auto;flex-wrap:nowrap"></div>
-    <div id="retro-exercise-picker-list"></div>
+    <div id="retro-exercise-picker-list" style="flex:1;overflow-y:auto;padding-bottom:calc(20px + var(--safe-bot))"></div>
   </div>
 </div>
 
@@ -989,8 +994,8 @@ function renderExProgresso() {
 
   if (chartExProgVolume) chartExProgVolume.destroy();
   chartExProgVolume = new Chart(document.getElementById('chart-ex-prog-volume').getContext('2d'), {
-    type:'bar',
-    data:{ labels:labels, datasets:[{ data:dataPoints.map(function(d){return d.vol;}), backgroundColor:'rgba(46,213,115,0.25)', borderColor:'#2ed573', borderWidth:2, borderRadius:6 }] },
+    type:'line',
+    data:{ labels:labels, datasets:[{ data:dataPoints.map(function(d){return d.vol;}), borderColor:'#2ed573', backgroundColor:'rgba(46,213,115,0.08)', borderWidth:2, fill:true, tension:0.4, pointBackgroundColor:'#2ed573', pointRadius: labels.length>20?2:4, pointHoverRadius:6 }] },
     options: chartOpts
   });
 }
@@ -999,7 +1004,6 @@ function openEditExercise(id) {
   var e = allExercises().find(function(x){return x.id===id;});
   if (!e) return;
   editingExerciseId = id;
-  // Inject content into generic modal
   document.getElementById('generic-modal-content').innerHTML =
     '<div class="modal-title">Modifica esercizio</div>'+
     '<div class="input-group"><label class="input-label">Nome</label>'+
@@ -1019,6 +1023,8 @@ function openEditExercise(id) {
     '</select></div>'+
     '<div class="input-group"><label class="input-label">Icona (emoji)</label>'+
     '<input class="input" id="edit-ex-icon" value="'+e.icon+'" placeholder="🏋️"></div>'+
+    '<div class="input-group"><label class="input-label">Note</label>'+
+    '<textarea class="input" id="edit-ex-notes" placeholder="Indicazioni tecniche, varianti...">'+( e.notes||'')+'</textarea></div>'+
     '<div class="flex gap-8">'+
       '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Annulla</button>'+
       '<button class="btn btn-primary" style="flex:2" onclick="saveEditExercise()">Salva</button>'+
@@ -1029,20 +1035,21 @@ function openEditExercise(id) {
 function saveEditExercise() {
   var id = editingExerciseId;
   if (!id) return;
-  var name = document.getElementById('edit-ex-name').value.trim();
-  var muscle = document.getElementById('edit-ex-muscle').value;
+  var name     = document.getElementById('edit-ex-name').value.trim();
+  var muscle   = document.getElementById('edit-ex-muscle').value;
   var category = document.getElementById('edit-ex-category').value;
-  var iconInput = document.getElementById('edit-ex-icon').value.trim();
+  var iconInput= document.getElementById('edit-ex-icon').value.trim();
+  var notes    = document.getElementById('edit-ex-notes').value.trim();
   var original = allExercises().find(function(x){return x.id===id;});
   var icon = iconInput || (original && original.icon) || '🏋️';
-  if (!name) { showToast('Inserisci il nome'); return; }
+  if (!name)   { showToast('Inserisci il nome'); return; }
   if (!muscle) { showToast('Seleziona gruppo muscolare'); return; }
   var isCustom = !!state.customExercises.find(function(c){return c.id===id;});
   if (isCustom) {
     var cx = state.customExercises.find(function(c){return c.id===id;});
-    cx.name=name; cx.muscle=muscle; cx.category=category; cx.icon=icon;
+    cx.name=name; cx.muscle=muscle; cx.category=category; cx.icon=icon; cx.notes=notes;
   } else {
-    state.builtinOverrides[id] = {name:name, muscle:muscle, category:category, icon:icon};
+    state.builtinOverrides[id] = {name:name, muscle:muscle, category:category, icon:icon, notes:notes};
   }
   saveState();
   closeModal('modal-generic');
@@ -1273,20 +1280,30 @@ function renderExercisePickerList() {
   }).join('') || '<div style="color:var(--text3);text-align:center;padding:30px">Nessun esercizio trovato</div>';
 }
 
+// Returns the rep range for an exercise category for display purposes
+function getDefaultRepsRange(category) {
+  if (category === 'Multiarticolare') return '6–8';
+  if (category === 'Complementare') return '8–12';
+  if (category === 'Isolamento') return '10–15';
+  return '8–12';
+}
+
 function selectExercise(exId) {
   closeModal('modal-exercise-picker');
   pendingExerciseId = exId;
   configExerciseIdx = null;
-  // Open config normally (notes, rest, rpe, warmup all editable)
   openExerciseConfig(exId, null);
-  // Then overwrite only the numeric fields with last session data if available
+  // Apply: last session values + last progression, then zero out progression and RPE
   var last = getLastSessionDataForExercise(exId);
   if (last) {
-    document.getElementById('cfg-sets').value = last.sets;
-    document.getElementById('cfg-reps').value = last.reps;
-    document.getElementById('cfg-weight').value = last.weight;
-    // Also restore increments
-    increments = {weight: last.increments.weight||0, sets: last.increments.sets||0, reps: last.increments.reps||0};
+    var inc = last.increments || {weight:0,sets:0,reps:0};
+    document.getElementById('cfg-sets').value   = Math.max(1, last.sets   + (inc.sets||0));
+    document.getElementById('cfg-reps').value   = Math.max(1, last.reps   + (inc.reps||0));
+    document.getElementById('cfg-weight').value = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
+    document.getElementById('cfg-rest').value   = last.rest || 120;
+    // Zero out progression and RPE so user sets them fresh for next session
+    document.getElementById('cfg-rpe').value = '';
+    increments = {weight:0, sets:0, reps:0};
     updateIncrementDisplay();
   }
 }
@@ -1438,14 +1455,18 @@ function renderAllenamento() {
 function getLastSessionDataForExercise(exId) {
   for (var i = state.sessions.length - 1; i >= 0; i--) {
     var s = state.sessions[i];
-    var e = (s.exercises||[]).find(function(e){ return e.exerciseId === exId; });
+    var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
     if (e && e.sets && e.sets.length) {
-      var maxW = Math.max.apply(null, e.sets.map(function(s){ return s.weight||0; }));
-      var lastSet = e.sets[e.sets.length-1];
+      var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
+      var setsToUse = workSets.length ? workSets : e.sets;
+      var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
+      var lastSet = setsToUse[setsToUse.length-1];
+      var rest = (e.config && e.config.rest) ? e.config.rest : 120;
       return {
-        sets: e.sets.length,
+        sets: setsToUse.length,
         reps: lastSet.reps || 10,
         weight: maxW,
+        rest: rest,
         increments: e.increments || {weight:0,sets:0,reps:0}
       };
     }
@@ -1455,15 +1476,18 @@ function getLastSessionDataForExercise(exId) {
 
 function buildSessionExercise(cfg) {
   var ex = findExercise(cfg.exerciseId);
-  // Merge with last session data for this exercise (takes priority over template values)
   var last = getLastSessionDataForExercise(cfg.exerciseId);
   var effectiveCfg = Object.assign({}, cfg);
   if (last) {
-    effectiveCfg.weight = last.weight;
-    effectiveCfg.reps = last.reps;
-    effectiveCfg.sets = last.sets;
-    // Keep increments from cfg (template/session config), not from history
+    var inc = last.increments || {weight:0,sets:0,reps:0};
+    effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
+    effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
+    effectiveCfg.sets   = Math.max(1, last.sets   + (inc.sets||0));
+    effectiveCfg.rest   = last.rest || effectiveCfg.rest || 120;
   }
+  // Progression and RPE are zeroed — user sets them fresh during this session
+  effectiveCfg.increments = {weight:0, sets:0, reps:0};
+  effectiveCfg.rpe = '';
   var sets = [];
   for (var i=0;i<(effectiveCfg.warmup||0);i++) sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*0.5),rpe:'',done:false});
   for (var j=0;j<effectiveCfg.sets;j++) sets.push({type:'work',reps:effectiveCfg.reps,weight:effectiveCfg.weight,rpe:effectiveCfg.rpe||'',done:false});
@@ -1921,14 +1945,36 @@ function confirmDeleteSession() {
 function renderProfilo() {
   document.getElementById('profile-name').value=state.profile.name||'Atleta';
   document.querySelectorAll('#unit-chips .chip').forEach(function(c){c.classList.toggle('selected',c.textContent===state.profile.unit);});
+  // Populate PR dropdown with exercises that have history
   var prs=calcPRs();
-  document.getElementById('pr-list').innerHTML=Object.keys(prs).map(function(id){
-    var pr=prs[id];var ex=findExercise(id);if(!ex)return'';
-    return '<div class="flex justify-between items-center" style="padding:9px 0;border-bottom:1px solid var(--border)">'+
-      '<div><div class="font-bold" style="font-size:14px">'+ex.icon+' '+ex.name+'</div><div style="font-size:11px;color:var(--text2)">'+ex.muscle+'</div></div>'+
-      '<div style="text-align:right"><div style="font-size:24px;font-weight:900;color:var(--accent)">'+pr.weight+'kg</div>'+
-      '<div style="font-size:11px;color:var(--text2)">'+pr.reps+' rip · 1RM ~'+pr.est1rm.toFixed(1)+'kg</div></div></div>';
-  }).join('')||'<div style="color:var(--text3);font-size:13px">Nessun dato disponibile</div>';
+  var sel=document.getElementById('pr-select');
+  var prev=sel.value;
+  sel.innerHTML='<option value="">Scegli un esercizio...</option>'+
+    Object.keys(prs).map(function(id){
+      var ex=findExercise(id);if(!ex)return'';
+      return '<option value="'+id+'">'+ex.icon+' '+ex.name+' ('+ex.muscle+')</option>';
+    }).join('');
+  // Restore previous selection if still valid
+  if(prev && prs[prev]) sel.value=prev;
+  renderPRDetail();
+}
+
+function renderPRDetail() {
+  var prs=calcPRs();
+  var id=document.getElementById('pr-select').value;
+  var el=document.getElementById('pr-detail');
+  if(!id){el.innerHTML='';return;}
+  var pr=prs[id];var ex=findExercise(id);
+  if(!pr||!ex){el.innerHTML='';return;}
+  el.innerHTML=
+    '<div class="flex justify-between items-center" style="padding:12px 0">'+
+      '<div><div class="font-bold" style="font-size:16px">'+ex.icon+' '+ex.name+'</div>'+
+      '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+ex.muscle+'</div></div>'+
+      '<div style="text-align:right">'+
+        '<div style="font-size:32px;font-weight:900;color:var(--accent);line-height:1">'+pr.weight+'kg</div>'+
+        '<div style="font-size:12px;color:var(--text2);margin-top:4px">'+pr.reps+' rip · 1RM ~'+pr.est1rm.toFixed(1)+'kg</div>'+
+      '</div>'+
+    '</div>';
 }
 
 function calcPRs() {
@@ -2048,6 +2094,10 @@ function editCurrentSession() {
 
 function renderRetroExerciseList() {
   document.getElementById('retro-ex-count').textContent = retroExercises.length;
+  // Always render the "Aggiungi esercizio" button below the list
+  document.getElementById('retro-add-btn-wrapper').innerHTML =
+    '<button class="btn btn-secondary btn-full" style="margin-bottom:14px;margin-top:'+(retroExercises.length?'10px':'0')+'" onclick="addRetroExercise()">+ Aggiungi esercizio</button>';
+
   document.getElementById('retro-exercise-list').innerHTML = retroExercises.map(function(re, idx) {
     var ex = findExercise(re.exerciseId);
     var name = ex ? (ex.icon+' '+ex.name) : re.exerciseId;
@@ -2185,6 +2235,11 @@ function pickRetroExercise(exId) {
   retroExercises.push({exerciseId: exId, sets:[{weight:0,reps:10,rpe:''}], increments:{weight:0,sets:0,reps:0}});
   closeModal('modal-retro-ex-picker');
   renderRetroExerciseList();
+  // Scroll modal to bottom so the new exercise and the "Aggiungi" button are visible
+  setTimeout(function() {
+    var modal = document.querySelector('#modal-retro .modal');
+    if (modal) modal.scrollTop = modal.scrollHeight;
+  }, 50);
 }
 
 function removeRetroExercise(idx) {
