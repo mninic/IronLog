@@ -445,7 +445,7 @@ select.input{appearance:none}
     <div class="modal-title" id="exercise-config-title">Configura esercizio</div>
     <div class="flex gap-8 mb-12">
       <div style="flex:1"><label class="input-label">Serie</label><input type="number" class="input" id="cfg-sets" value="3" min="1" max="30"></div>
-      <div style="flex:1"><label class="input-label">Ripetizioni</label><input type="number" class="input" id="cfg-reps" value="10" min="1" max="100"></div>
+      <div style="flex:1" id="cfg-reps-cell"><label class="input-label">Ripetizioni</label><input type="number" class="input" id="cfg-reps" value="10" min="1" max="100"></div>
       <div style="flex:1"><label class="input-label">Peso (kg)</label><input type="number" class="input" id="cfg-weight" value="0" min="0" step="0.5"></div>
     </div>
     <div class="flex gap-8 mb-12">
@@ -694,6 +694,52 @@ select.input{appearance:none}
 const MUSCLES = ['Petto','Schiena','Spalle','Bicipiti','Tricipiti','Gambe','Addome'];
 const MUSCLE_COLORS = {Petto:'#e8ff47',Schiena:'#ff6b35',Spalle:'#1e90ff',Bicipiti:'#a855f7',Tricipiti:'#2ed573',Gambe:'#ff4757',Addome:'#ff9f43'};
 const EMOJIS = ['🏋️','💪','🔥','⚡','🎯','🔄','🚣','🏔️','🌙','🦅','⬆️','⬇️','🔨','💀','🦵','🦶','🤸','🧗','🥊','🎽','⚙️','🔒','⚓','🦋','📐','🤷','🚶','🏃','🧘','🤼'];
+
+// Rep progressions by category
+const REP_PROGRESSIONS = {
+  'Multiarticolare': [6, 7, 8],
+  'Complementare':   [8, 10, 12],
+  'Isolamento':      [10, 12, 15],
+};
+const DEFAULT_REP_PROGRESSION = [8, 10, 12];
+
+function getRepProgression(exId) {
+  var ex = exId ? allExercises().find(function(e){ return e.id === exId; }) : null;
+  if (!ex) return DEFAULT_REP_PROGRESSION;
+  return REP_PROGRESSIONS[ex.category] || DEFAULT_REP_PROGRESSION;
+}
+
+function snapToProgression(reps, progression) {
+  // Return the closest value in the progression
+  var closest = progression[0];
+  var minDist = Math.abs(reps - closest);
+  for (var i = 1; i < progression.length; i++) {
+    var d = Math.abs(reps - progression[i]);
+    if (d < minDist) { minDist = d; closest = progression[i]; }
+  }
+  return closest;
+}
+
+function nextRep(reps, progression, dir) {
+  // dir: +1 = increase, -1 = decrease
+  var snapped = snapToProgression(reps, progression);
+  var idx = progression.indexOf(snapped);
+  var newIdx = Math.max(0, Math.min(progression.length - 1, idx + dir));
+  return progression[newIdx];
+}
+
+function buildRepSelector(inputId, reps, exId, onchangeExpr) {
+  var progression = getRepProgression(exId);
+  var snapped = snapToProgression(reps, progression);
+  var minRep = progression[0], maxRep = progression[progression.length - 1];
+  var isMin = snapped <= minRep, isMax = snapped >= maxRep;
+  return '<div class="rep-selector" style="display:flex;align-items:center;gap:3px;justify-content:center">'+
+    '<button type="button" class="rep-step-btn" '+(isMin?'disabled':'')+' style="width:26px;height:30px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMin?'var(--text3)':'var(--text)')+';font-size:15px;font-weight:700;cursor:'+(isMin?'default':'pointer')+';font-family:inherit;line-height:1" onclick="'+onchangeExpr.replace('DIR', -1)+'">−</button>'+
+    '<input type="hidden" id="'+inputId+'" value="'+snapped+'">'+
+    '<div style="font-size:15px;font-weight:700;min-width:26px;text-align:center">'+snapped+'</div>'+
+    '<button type="button" class="rep-step-btn" '+(isMax?'disabled':'')+' style="width:26px;height:30px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMax?'var(--text3)':'var(--text)')+';font-size:15px;font-weight:700;cursor:'+(isMax?'default':'pointer')+';font-family:inherit;line-height:1" onclick="'+onchangeExpr.replace('DIR', 1)+'">+</button>'+
+  '</div>';
+}
 
 const BUILTIN_EXERCISES = [
   {id:'bp',name:'Panca Piana',muscle:'Petto',icon:'🏋️',category:'Multiarticolare'},
@@ -1298,7 +1344,11 @@ function selectExercise(exId) {
   if (last) {
     var inc = last.increments || {weight:0,sets:0,reps:0};
     document.getElementById('cfg-sets').value   = Math.max(1, last.sets   + (inc.sets||0));
-    document.getElementById('cfg-reps').value   = Math.max(1, last.reps   + (inc.reps||0));
+    var progression = getRepProgression(exId);
+    var rawReps = Math.max(1, last.reps + (inc.reps||0));
+    var snappedReps = snapToProgression(rawReps, progression);
+    var repCell = document.getElementById('cfg-reps-cell');
+    repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
     document.getElementById('cfg-weight').value = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
     document.getElementById('cfg-rest').value   = last.rest || 120;
     // Zero out progression and RPE so user sets them fresh for next session
@@ -1319,7 +1369,12 @@ function openExerciseConfig(exId, existing) {
   var ex = findExercise(exId);
   document.getElementById('exercise-config-title').textContent = ex ? ex.name : 'Configura esercizio';
   document.getElementById('cfg-sets').value = existing ? existing.sets : 3;
-  document.getElementById('cfg-reps').value = existing ? existing.reps : 10;
+  var progression = getRepProgression(exId);
+  var initReps = existing ? existing.reps : progression[0];
+  var snappedReps = snapToProgression(initReps, progression);
+  // Render rep selector in place of the free input
+  var repCell = document.getElementById('cfg-reps-cell');
+  repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
   document.getElementById('cfg-weight').value = existing ? existing.weight : 0;
   document.getElementById('cfg-rest').value = existing ? (existing.rest||120) : 120;
   document.getElementById('cfg-rpe').value = existing ? (existing.rpe||'') : '';
@@ -1329,6 +1384,16 @@ function openExerciseConfig(exId, existing) {
   document.querySelectorAll('#warmup-chips .chip').forEach(function(c){c.classList.toggle('selected',parseInt(c.dataset.val)===warmupCount);});
   updateIncrementDisplay();
   openModal('modal-exercise-config');
+}
+
+function stepCfgReps(dir) {
+  var inp = document.getElementById('cfg-reps');
+  var progression = getRepProgression(pendingExerciseId);
+  var newVal = nextRep(parseInt(inp.value)||progression[0], progression, dir);
+  inp.value = newVal;
+  // Re-render the rep selector
+  var repCell = document.getElementById('cfg-reps-cell');
+  repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', newVal, pendingExerciseId, 'stepCfgReps(DIR)');
 }
 
 function selectWarmup(n, el) {
@@ -1553,10 +1618,19 @@ function renderSessionExercises() {
     var setsHtml = ex.sets.map(function(set,setIdx){
       var isWu = set.type==='warmup';
       var workNum = isWu ? '🔥' : (setIdx-wuCount+1);
+      var exIdForProg = ex.config ? ex.config.exerciseId : null;
+      var progression = getRepProgression(exIdForProg);
+      var snappedReps = snapToProgression(set.reps||progression[0], progression);
+      var isMinR = snappedReps <= progression[0], isMaxR = snappedReps >= progression[progression.length-1];
+      var repSel = '<div style="display:flex;align-items:center;gap:2px;justify-content:center">'+
+        '<button type="button" '+(isMinR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMinR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMinR?'default':'pointer')+';font-family:inherit;line-height:1;flex-shrink:0" onclick="stepSessionRep('+exIdx+','+setIdx+',-1)">−</button>'+
+        '<div style="font-size:14px;font-weight:700;min-width:22px;text-align:center">'+snappedReps+'</div>'+
+        '<button type="button" '+(isMaxR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMaxR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMaxR?'default':'pointer')+';font-family:inherit;line-height:1;flex-shrink:0" onclick="stepSessionRep('+exIdx+','+setIdx+',1)">+</button>'+
+      '</div>';
       return '<div class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+'">'+
         '<div class="set-num'+(isWu?' wu':'')+'">'+workNum+'</div>'+
         '<input type="number" class="set-inp" value="'+set.weight+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
-        '<input type="number" class="set-inp" value="'+set.reps+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()">'+
+        repSel+
         '<select class="set-rpe" onchange="updateSet('+exIdx+','+setIdx+',\'rpe\',this.value)">'+
         '<option value="">-</option>'+
         ['6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option'+(set.rpe==r?' selected':'')+'>'+r+'</option>';}).join('')+
@@ -1591,6 +1665,16 @@ function updateSet(exIdx,setIdx,field,value) {
   if (!state.activeSession) return;
   state.activeSession.exercises[exIdx].sets[setIdx][field] = field==='rpe' ? value : (parseFloat(value)||0);
   saveState();
+}
+
+function stepSessionRep(exIdx, setIdx, dir) {
+  if (!state.activeSession) return;
+  var set = state.activeSession.exercises[exIdx].sets[setIdx];
+  var exId = state.activeSession.exercises[exIdx].config ? state.activeSession.exercises[exIdx].config.exerciseId : null;
+  var progression = getRepProgression(exId);
+  set.reps = nextRep(set.reps||progression[0], progression, dir);
+  saveState();
+  renderSessionExercises();
 }
 
 function toggleSet(exIdx,setIdx) {
@@ -2104,10 +2188,18 @@ function renderRetroExerciseList() {
     var inc = re.increments || {weight:0,sets:0,reps:0};
 
     var setsHtml = re.sets.map(function(s, si) {
+      var progression = getRepProgression(re.exerciseId);
+      var snappedReps = snapToProgression(s.reps||progression[0], progression);
+      var isMinR = snappedReps <= progression[0], isMaxR = snappedReps >= progression[progression.length-1];
+      var repSel = '<div style="display:flex;align-items:center;gap:2px;flex:1;justify-content:center">'+
+        '<button type="button" '+(isMinR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMinR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMinR?'default':'pointer')+';font-family:inherit;line-height:1" onclick="stepRetroRep('+idx+','+si+',-1)">−</button>'+
+        '<div style="font-size:14px;font-weight:700;min-width:22px;text-align:center">'+snappedReps+'</div>'+
+        '<button type="button" '+(isMaxR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMaxR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMaxR?'default':'pointer')+';font-family:inherit;line-height:1" onclick="stepRetroRep('+idx+','+si+',1)">+</button>'+
+      '</div>';
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
         '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+s.weight+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
-        '<input type="number" class="set-inp" style="flex:1" placeholder="rip" value="'+s.reps+'" oninput="updateRetroSet('+idx+','+si+',\'reps\',this.value)" min="1">'+
+        repSel+
         '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
           ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+(s.rpe===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
         '</select>'+
