@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="IronLog">
@@ -22,9 +22,10 @@
   --safe-bot:env(safe-area-inset-bottom,0px);
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+html{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased}
 
-.app{display:flex;flex-direction:column;height:100dvh}
+.app{display:flex;flex-direction:column;position:fixed;top:0;left:0;right:0;bottom:0;height:100%}
 .page{flex:1;overflow-y:auto;padding-bottom:calc(70px + var(--safe-bot));padding-top:calc(var(--safe-top) + 16px)}
 .page::-webkit-scrollbar{display:none}
 .page{display:none}.page.active{display:block}
@@ -229,9 +230,6 @@ select.input{appearance:none}
           <div class="session-timer" id="session-timer">00:00</div>
           <div style="font-size:13px;color:var(--text2)" id="session-name-display">Allenamento</div>
         </div>
-        <div class="flex gap-8">
-          <button class="btn btn-sm btn-danger" onclick="finishSession()">Fine</button>
-        </div>
       </div>
       <div id="rest-timer-bar" style="display:none" class="timer-rest mt-8">
         <div>
@@ -334,7 +332,7 @@ select.input{appearance:none}
     <div class="chip-row" style="padding:0 16px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap" id="ex-lib-muscle-chips"></div>
     <div id="ex-lib-list"></div>
     <div style="padding:0 16px;margin-top:8px">
-      <button class="btn btn-ghost btn-sm btn-full" style="color:var(--text3)" onclick="restoreBuiltins()">↩ Ripristina tutti gli esercizi built-in</button>
+      <button class="btn btn-ghost btn-sm btn-full" style="color:var(--text3)" onclick="openHiddenExercises()">👁 Gestisci esercizi nascosti</button>
     </div>
   </div>
 
@@ -489,7 +487,7 @@ select.input{appearance:none}
       </div>
       <div class="increment-row">
         <div class="increment-label">Ripetizioni</div>
-        <div class="increment-btns">
+        <div class="increment-btns" id="inc-reps-row">
           <button class="inc-btn" onclick="changeIncrement('reps',-1)">−</button>
           <div class="inc-value zero" id="inc-reps-val">0</div>
           <button class="inc-btn" onclick="changeIncrement('reps',1)">+</button>
@@ -634,7 +632,7 @@ select.input{appearance:none}
       </div>
       <div class="increment-row">
         <div class="increment-label">Ripetizioni</div>
-        <div class="increment-btns">
+        <div class="increment-btns" id="si-reps-row">
           <button class="inc-btn" onclick="changeSI('reps',-1)">−</button>
           <div class="inc-value zero" id="si-reps-val">0</div>
           <button class="inc-btn" onclick="changeSI('reps',1)">+</button>
@@ -793,7 +791,7 @@ const BUILTIN_EXERCISES = [
 // ============================================================
 // STATE
 // ============================================================
-let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null };
+let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], hiddenExercises:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null };
 
 // temp state
 let editingTemplateIdx = null;
@@ -817,14 +815,25 @@ let restEndTime = null;
 
 function allExercises() {
   var builtins = BUILTIN_EXERCISES
-    .filter(function(e){ return !state.deletedBuiltins.includes(e.id); })
+    .filter(function(e){ return !state.deletedBuiltins.includes(e.id) && !state.hiddenExercises.includes(e.id); })
+    .map(function(e){
+      var ov = state.builtinOverrides[e.id];
+      return ov ? Object.assign({}, e, ov) : e;
+    });
+  return builtins.concat(state.customExercises.filter(function(e){ return !state.hiddenExercises.includes(e.id); }));
+}
+function allExercisesIncludingHidden() {
+  var builtins = BUILTIN_EXERCISES
     .map(function(e){
       var ov = state.builtinOverrides[e.id];
       return ov ? Object.assign({}, e, ov) : e;
     });
   return builtins.concat(state.customExercises);
 }
-function findExercise(id) { return allExercises().find(function(e){return e.id===id;}); }
+function findExercise(id) {
+  // findExercise searches all exercises including hidden (for history display)
+  return allExercisesIncludingHidden().find(function(e){return e.id===id;});
+}
 
 // ============================================================
 // STORAGE
@@ -838,6 +847,7 @@ function loadState() {
       state.sessions = p.sessions || [];
       state.customExercises = p.customExercises || [];
       state.deletedBuiltins = p.deletedBuiltins || [];
+      state.hiddenExercises = p.hiddenExercises || [];
       state.builtinOverrides = p.builtinOverrides || {};
       state.profile = p.profile || {name:'Atleta',unit:'kg'};
       // Restore active session if present
@@ -870,6 +880,7 @@ function saveState() {
       templates:state.templates, sessions:state.sessions,
       customExercises:state.customExercises,
       deletedBuiltins:state.deletedBuiltins,
+      hiddenExercises:state.hiddenExercises,
       builtinOverrides:state.builtinOverrides,
       profile:state.profile
     };
@@ -939,28 +950,20 @@ function renderEsercizi() {
         m+' <span style="color:var(--text3);font-weight:400">('+grouped[m].length+')</span>'+
       '</div></div>';
     grouped[m].forEach(function(e){
-      var isCustom = !!state.customExercises.find(function(c){return c.id===e.id;});
-      var isModified = !isCustom && !!state.builtinOverrides[e.id];
-      var badge = isCustom
-        ? '<span style="font-size:10px;color:var(--blue);background:rgba(30,144,255,0.12);padding:2px 7px;border-radius:10px;border:1px solid rgba(30,144,255,0.3)">Custom</span>'
-        : isModified
-          ? '<span style="font-size:10px;color:var(--warm);background:rgba(255,159,67,0.12);padding:2px 7px;border-radius:10px;border:1px solid rgba(255,159,67,0.3)">Modificato</span>'
-          : '<span style="font-size:10px;color:var(--text3);background:var(--bg3);padding:2px 7px;border-radius:10px;border:1px solid var(--border)">Built-in</span>';
       html += '<div class="history-item" style="margin:0 16px 8px;padding:12px 14px">'+
         '<div class="flex justify-between items-center" style="gap:8px">'+
           '<div class="flex items-center gap-8" style="min-width:0;flex:1">'+
-            '<span style="font-size:22px;flex-shrink:0">'+e.icon+'</span>'+
+            
             '<div style="min-width:0">'+
               '<div class="font-bold" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e.name+'</div>'+
-              '<div class="flex items-center gap-8" style="margin-top:4px;flex-wrap:wrap;gap:6px">'+
+              '<div style="margin-top:4px">'+
                 '<span style="font-size:11px;color:var(--text2)">'+e.category+'</span>'+
-                badge+
               '</div>'+
             '</div>'+
           '</div>'+
           '<div class="flex gap-8" style="flex-shrink:0">'+
             '<button class="btn btn-xs btn-secondary" onclick="openEditExercise(\''+e.id+'\')">✏️</button>'+
-            '<button class="btn btn-xs btn-danger" onclick="promptDeleteExercise(\''+e.id+'\')">🗑️</button>'+
+            '<button class="btn btn-xs btn-secondary" onclick="hideExercise(\''+e.id+'\')" title="Nascondi">🙈</button>'+
           '</div>'+
         '</div>'+
       '</div>';
@@ -996,7 +999,7 @@ function populateExProgSelect() {
   var sel = document.getElementById('ex-prog-select');
   var cur = sel.value;
   sel.innerHTML = '<option value="">Scegli un esercizio...</option>' +
-    ids.map(function(id){ var ex = findExercise(id); return ex ? '<option value="'+id+'"'+(id===cur?' selected':'')+'>'+ex.icon+' '+ex.name+'</option>' : ''; }).join('');
+    ids.map(function(id){ var ex = findExercise(id); return ex ? '<option value="'+id+'"'+(id===cur?' selected':'')+'>'+ex.name+'</option>' : ''; }).join('');
   if (cur) renderExProgresso();
 }
 
@@ -1103,46 +1106,71 @@ function saveEditExercise() {
   showToast('Esercizio aggiornato');
 }
 
-var deleteExerciseId = null;
-function promptDeleteExercise(id) {
-  deleteExerciseId = id;
-  var e = allExercises().find(function(x){return x.id===id;});
-  var exName = e ? e.name : '';
-  document.getElementById('generic-modal-content').innerHTML =
-    '<div style="text-align:center">'+
-    '<div style="font-size:48px;margin-bottom:12px">🗑️</div>'+
-    '<div class="modal-title" style="text-align:center">Eliminare esercizio?</div>'+
-    '<div style="color:var(--text2);font-size:15px;font-weight:600;margin-bottom:6px">'+exName+'</div>'+
-    '<div style="color:var(--text3);font-size:12px;margin-bottom:24px">I built-in possono essere ripristinati in seguito</div>'+
-    '<div class="flex gap-8">'+
-      '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Annulla</button>'+
-      '<button class="btn btn-danger" style="flex:1" onclick="confirmDeleteExercise()">Elimina</button>'+
-    '</div></div>';
+function hideExercise(id) {
+  if (!state.hiddenExercises.includes(id)) state.hiddenExercises.push(id);
+  saveState();
+  renderEsercizi();
+  showToast('Esercizio nascosto');
+}
+
+function openHiddenExercises() {
+  var allHidden = allExercisesIncludingHidden().filter(function(e){
+    return state.hiddenExercises.includes(e.id);
+  });
+  if (!allHidden.length) {
+    document.getElementById('generic-modal-content').innerHTML =
+      '<div style="text-align:center;padding:20px 0">'+
+      '<div style="font-size:48px;margin-bottom:12px">👁</div>'+
+      '<div class="modal-title" style="text-align:center">Esercizi nascosti</div>'+
+      '<div style="color:var(--text3);font-size:14px;margin-bottom:24px">Nessun esercizio nascosto</div>'+
+      '<button class="btn btn-secondary btn-full" onclick="closeModal(\'modal-generic\')">Chiudi</button>'+
+      '</div>';
+  } else {
+    var listHtml = allHidden.map(function(e){
+      return '<div class="flex items-center gap-8" style="padding:10px 0;border-bottom:1px solid var(--border)">'+
+        
+        '<div style="flex:1;min-width:0">'+
+          '<div class="font-bold" style="font-size:14px">'+e.name+'</div>'+
+          '<div style="font-size:11px;color:var(--text2)">'+e.muscle+' · '+e.category+'</div>'+
+        '</div>'+
+        '<button class="btn btn-xs btn-primary" onclick="showExercise(\''+e.id+'\')">Mostra</button>'+
+      '</div>';
+    }).join('');
+    document.getElementById('generic-modal-content').innerHTML =
+      '<div class="modal-title">Esercizi nascosti</div>'+
+      '<div style="margin-bottom:16px;font-size:13px;color:var(--text2)">'+allHidden.length+' esercizi nascosti. Premi "Mostra" per renderli di nuovo visibili.</div>'+
+      '<div>'+listHtml+'</div>'+
+      '<div style="margin-top:16px;display:flex;gap:8px">'+
+        '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Chiudi</button>'+
+        '<button class="btn btn-ghost btn-sm" style="flex:1;color:var(--text3)" onclick="showAllExercises()">Mostra tutti</button>'+
+      '</div>';
+  }
   openModal('modal-generic');
 }
 
-function confirmDeleteExercise() {
-  var id = deleteExerciseId;
-  closeModal('modal-generic');
-  if (!id) return;
-  var isCustom = !!state.customExercises.find(function(c){return c.id===id;});
-  if (isCustom) {
-    state.customExercises = state.customExercises.filter(function(c){return c.id!==id;});
-  } else {
-    if (!state.deletedBuiltins.includes(id)) state.deletedBuiltins.push(id);
-    delete state.builtinOverrides[id];
-  }
+function showExercise(id) {
+  state.hiddenExercises = state.hiddenExercises.filter(function(x){ return x !== id; });
   saveState();
+  openHiddenExercises(); // refresh modal
   renderEsercizi();
-  showToast('Esercizio eliminato');
+  showToast('Esercizio ripristinato');
+}
+
+function showAllExercises() {
+  state.hiddenExercises = [];
+  saveState();
+  closeModal('modal-generic');
+  renderEsercizi();
+  showToast('Tutti gli esercizi visibili');
 }
 
 function restoreBuiltins() {
   state.deletedBuiltins = [];
+  state.hiddenExercises = [];
   state.builtinOverrides = {};
   saveState();
   renderEsercizi();
-  showToast('Esercizi built-in ripristinati');
+  showToast('Esercizi ripristinati');
 }
 // HOME
 // ============================================================
@@ -1193,7 +1221,7 @@ function renderTemplates() {
   document.getElementById('template-list').innerHTML = state.templates.map(function(t,i){
     var exLines = t.exercises.map(function(e){
       var ex=findExercise(e.exerciseId);
-      return ex ? ex.icon+' '+ex.name+' — '+e.sets+'x'+e.reps+' @ '+e.weight+'kg' : '';
+      return ex ? ex.name+' — '+e.sets+'x'+e.reps+' @ '+e.weight+'kg' : '';
     }).join('<br>');
     return '<div class="template-card">'+
       '<div class="template-card-stripe" style="background:'+(t.color||'#e8ff47')+'"></div>'+
@@ -1245,7 +1273,7 @@ function renderTplExerciseList() {
     var ex=findExercise(e.exerciseId); if(!ex)return'';
     var hasInc = e.increments && (e.increments.weight||e.increments.sets||e.increments.reps);
     return '<div class="flex items-center gap-8" style="margin-bottom:10px">'+
-      '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+ex.icon+' '+ex.name+'</div>'+
+      '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+ex.name+'</div>'+
       '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+e.sets+'x'+e.reps+' @ '+e.weight+'kg'+(e.rpe?' RPE '+e.rpe:'')+(hasInc?' +prog':'')+'</div></div>'+
       '<button class="btn btn-xs btn-secondary" onclick="configureTemplateExercise('+i+')">Config</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeTemplateExercise('+i+')">X</button></div>';
@@ -1320,7 +1348,7 @@ function renderExercisePickerList() {
     return '<div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">'+muscle+'</div>'+
       grouped[muscle].map(function(e){
         return '<div class="ex-picker-item" onclick="selectExercise(\''+e.id+'\')">'+
-          '<div><div class="ex-picker-name">'+e.icon+' '+e.name+'</div><div class="ex-picker-cat">'+e.category+'</div></div>'+
+          '<div><div class="ex-picker-name">'+e.name+'</div><div class="ex-picker-cat">'+e.category+'</div></div>'+
           '<div style="color:var(--accent);font-size:20px">+</div></div>';
       }).join('');
   }).join('') || '<div style="color:var(--text3);text-align:center;padding:30px">Nessun esercizio trovato</div>';
@@ -1403,17 +1431,40 @@ function selectWarmup(n, el) {
 }
 
 function changeIncrement(field, delta) {
-  increments[field] = Math.round((increments[field]+delta)*10)/10;
+  if (field === 'reps') {
+    // Step through the fixed progression for this exercise
+    var progression = getRepProgression(pendingExerciseId);
+    var currentReps = parseInt(document.getElementById('cfg-reps').value) || progression[0];
+    var targetReps = currentReps + increments.reps;
+    var newTarget = nextRep(targetReps, progression, delta);
+    increments.reps = newTarget - currentReps;
+  } else {
+    increments[field] = Math.round((increments[field]+delta)*10)/10;
+  }
   updateIncrementDisplay();
 }
 
 function updateIncrementDisplay() {
-  ['weight','sets','reps'].forEach(function(f){
+  ['weight','sets'].forEach(function(f){
     var el = document.getElementById('inc-'+f+'-val');
     var v = increments[f];
     el.textContent = (v>0?'+':'')+v;
     el.className = 'inc-value '+(v>0?'pos':v<0?'neg':'zero');
   });
+  // Reps: show absolute target value with progression steps
+  var progression = getRepProgression(pendingExerciseId);
+  var currentReps = parseInt(document.getElementById('cfg-reps') ? document.getElementById('cfg-reps').value : progression[0]) || progression[0];
+  var targetReps = snapToProgression(currentReps + increments.reps, progression);
+  var isMin = targetReps <= progression[0], isMax = targetReps >= progression[progression.length-1];
+  var repsRow = document.getElementById('inc-reps-row');
+  if (repsRow) {
+    repsRow.innerHTML =
+      '<button class="inc-btn" '+(isMin?'disabled style="opacity:0.3"':'')+' onclick="changeIncrement(\'reps\',-1)">−</button>'+
+      '<div class="inc-value '+(targetReps > currentReps ? 'pos' : targetReps < currentReps ? 'neg' : 'zero')+'" id="inc-reps-val">'+
+        (targetReps > currentReps ? '+' : '') + increments.reps + ' → ' + targetReps +
+      '</div>'+
+      '<button class="inc-btn" '+(isMax?'disabled style="opacity:0.3"':'')+' onclick="changeIncrement(\'reps\',1)">+</button>';
+  }
 }
 
 function saveExerciseConfig() {
@@ -1548,13 +1599,19 @@ function buildSessionExercise(cfg) {
     effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
     effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
     effectiveCfg.sets   = Math.max(1, last.sets   + (inc.sets||0));
-    effectiveCfg.rest   = last.rest || effectiveCfg.rest || 120;
+    // rest always comes from the template cfg, NOT from history (history doesn't store it reliably)
+    effectiveCfg.rest   = cfg.rest || 120;
   }
   // Progression and RPE are zeroed — user sets them fresh during this session
   effectiveCfg.increments = {weight:0, sets:0, reps:0};
   effectiveCfg.rpe = '';
   var sets = [];
-  for (var i=0;i<(effectiveCfg.warmup||0);i++) sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*0.5),rpe:'',done:false});
+  var wuCount = effectiveCfg.warmup || 0;
+  var wuPcts = wuCount === 1 ? [0.75] : wuCount === 2 ? [0.50, 0.75] : wuCount === 3 ? [0.25, 0.50, 0.75] : [];
+  for (var i=0;i<wuCount;i++) {
+    var pct = wuPcts[i] || 0.5;
+    sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*pct),rpe:'',done:false});
+  }
   for (var j=0;j<effectiveCfg.sets;j++) sets.push({type:'work',reps:effectiveCfg.reps,weight:effectiveCfg.weight,rpe:effectiveCfg.rpe||'',done:false});
   return {config:effectiveCfg, ex:ex, sets:sets};
 }
@@ -1618,19 +1675,10 @@ function renderSessionExercises() {
     var setsHtml = ex.sets.map(function(set,setIdx){
       var isWu = set.type==='warmup';
       var workNum = isWu ? '🔥' : (setIdx-wuCount+1);
-      var exIdForProg = ex.config ? ex.config.exerciseId : null;
-      var progression = getRepProgression(exIdForProg);
-      var snappedReps = snapToProgression(set.reps||progression[0], progression);
-      var isMinR = snappedReps <= progression[0], isMaxR = snappedReps >= progression[progression.length-1];
-      var repSel = '<div style="display:flex;align-items:center;gap:2px;justify-content:center">'+
-        '<button type="button" '+(isMinR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMinR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMinR?'default':'pointer')+';font-family:inherit;line-height:1;flex-shrink:0" onclick="stepSessionRep('+exIdx+','+setIdx+',-1)">−</button>'+
-        '<div style="font-size:14px;font-weight:700;min-width:22px;text-align:center">'+snappedReps+'</div>'+
-        '<button type="button" '+(isMaxR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMaxR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMaxR?'default':'pointer')+';font-family:inherit;line-height:1;flex-shrink:0" onclick="stepSessionRep('+exIdx+','+setIdx+',1)">+</button>'+
-      '</div>';
       return '<div class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+'">'+
         '<div class="set-num'+(isWu?' wu':'')+'">'+workNum+'</div>'+
         '<input type="number" class="set-inp" value="'+set.weight+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
-        repSel+
+        '<input type="number" class="set-inp" value="'+set.reps+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()">'+
         '<select class="set-rpe" onchange="updateSet('+exIdx+','+setIdx+',\'rpe\',this.value)">'+
         '<option value="">-</option>'+
         ['6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option'+(set.rpe==r?' selected':'')+'>'+r+'</option>';}).join('')+
@@ -1638,11 +1686,20 @@ function renderSessionExercises() {
         '<div class="set-chk'+(set.done?' ok':'')+'" onclick="toggleSet('+exIdx+','+setIdx+')">'+(set.done?'✓':'')+'</div>'+
         '</div>';
     }).join('');
+    var restSec = ex.config.rest || 120;
+    var restMin = Math.floor(restSec/60), restRemS = restSec%60;
+    var restLabel = restMin + ':' + (restRemS<10?'0':'') + restRemS;
     return '<div class="exercise-section">'+
       '<div class="exercise-header">'+
-      '<div><div class="exercise-name-s">'+(ex.ex?ex.ex.icon+' '+ex.ex.name:'Esercizio')+'</div>'+
+      '<div><div class="exercise-name-s">'+(ex.ex?ex.ex.name:'Esercizio')+'</div>'+
       '<div class="exercise-muscle-s">'+(ex.ex?ex.ex.muscle:'')+'</div></div>'+
-      '<div class="flex gap-8">'+
+      '<div class="flex gap-8" style="align-items:center">'+
+      '<div style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:3px 6px" title="Recupero">'+
+        '<span style="font-size:10px;color:var(--text3)">⏱</span>'+
+        '<button type="button" style="width:18px;height:18px;border:none;background:transparent;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;font-family:inherit" onclick="changeSessionRest('+exIdx+',-15)">−</button>'+
+        '<span style="font-size:12px;font-weight:700;min-width:30px;text-align:center;color:var(--accent)">'+restLabel+'</span>'+
+        '<button type="button" style="width:18px;height:18px;border:none;background:transparent;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;font-family:inherit" onclick="changeSessionRest('+exIdx+',15)">+</button>'+
+      '</div>'+
       '<button class="btn btn-xs btn-secondary" onclick="openSessionIncrement('+exIdx+')" title="Modifica progressione">Prog.</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeSessionExercise('+exIdx+')">X</button></div></div>'+
       '<div class="sets-table">'+
@@ -1653,11 +1710,19 @@ function renderSessionExercises() {
       '<button class="btn btn-danger" onclick="removeLastSet('+exIdx+')">- Serie</button></div>'+
       '<div class="next-badge"><span class="nd-0">Prox:</span>'+(nextParts.length?nextParts.join(' '):'<span class="nd-0">nessuna modifica</span>')+
       '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
-      (ex.config.notes?'<div class="ex-note-bar">'+ex.config.notes+'</div>':'<div style="border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius)"></div>')+
+      (function(){
+        var progression = getRepProgression(ex.config ? ex.config.exerciseId : null);
+        var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+'</span>';
+        var noteTxt = ex.config.notes ? '<span>'+ex.config.notes+'</span> · ' : '';
+        return '<div class="ex-note-bar">'+noteTxt+'rip: '+progStr+'</div>';
+      })()+
       '</div>';
   }).join('')+
   '<div style="padding:0 16px 8px">'+
     '<button class="btn btn-secondary btn-full" onclick="addExerciseToSession()">+ Aggiungi esercizio</button>'+
+  '</div>'+
+  '<div style="padding:8px 16px 16px">'+
+    '<button class="btn btn-danger btn-full" style="padding:16px;font-size:16px" onclick="finishSession()">🏁 Fine allenamento</button>'+
   '</div>';
 }
 
@@ -1673,6 +1738,14 @@ function stepSessionRep(exIdx, setIdx, dir) {
   var exId = state.activeSession.exercises[exIdx].config ? state.activeSession.exercises[exIdx].config.exerciseId : null;
   var progression = getRepProgression(exId);
   set.reps = nextRep(set.reps||progression[0], progression, dir);
+  saveState();
+  renderSessionExercises();
+}
+
+function changeSessionRest(exIdx, delta) {
+  if (!state.activeSession) return;
+  var cfg = state.activeSession.exercises[exIdx].config;
+  cfg.rest = Math.max(15, (cfg.rest||120) + delta);
   saveState();
   renderSessionExercises();
 }
@@ -1725,16 +1798,54 @@ function openSessionIncrement(exIdx) {
 }
 
 function changeSI(field,delta) {
-  siIncrements[field] = Math.round((siIncrements[field]+delta)*10)/10;
+  if (field === 'reps') {
+    var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
+    var exId = ex && ex.config ? ex.config.exerciseId : null;
+    var progression = getRepProgression(exId);
+    // Current reps = last performed work set reps (or config reps)
+    var currentReps = getCurrentSIReps(ex, progression);
+    var targetReps = currentReps + siIncrements.reps;
+    var newTarget = nextRep(targetReps, progression, delta);
+    siIncrements.reps = newTarget - currentReps;
+  } else {
+    siIncrements[field] = Math.round((siIncrements[field]+delta)*10)/10;
+  }
   updateSIDisplay();
 }
 
+function getCurrentSIReps(ex, progression) {
+  if (!ex) return progression[0];
+  // Use last performed work set reps if available
+  var workSets = ex.sets ? ex.sets.filter(function(s){ return s.type==='work'; }) : [];
+  if (workSets.length) return workSets[workSets.length-1].reps || progression[0];
+  return (ex.config && ex.config.reps) || progression[0];
+}
+
 function updateSIDisplay() {
-  ['weight','sets','reps'].forEach(function(f){
+  ['weight','sets'].forEach(function(f){
     var el=document.getElementById('si-'+f+'-val'), v=siIncrements[f];
     el.textContent=(v>0?'+':'')+v;
     el.className='inc-value '+(v>0?'pos':v<0?'neg':'zero');
   });
+  // Reps: show target with step info
+  var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
+  var exId = ex && ex.config ? ex.config.exerciseId : null;
+  var progression = getRepProgression(exId);
+  var currentReps = getCurrentSIReps(ex, progression);
+  var targetReps = snapToProgression(currentReps + siIncrements.reps, progression);
+  var isMin = targetReps <= progression[0], isMax = targetReps >= progression[progression.length-1];
+  var repsRow = document.getElementById('si-reps-row');
+  if (repsRow) {
+    repsRow.innerHTML =
+      '<button class="inc-btn" '+(isMin?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',-1)">−</button>'+
+      '<div class="inc-value '+(targetReps > currentReps ? 'pos' : targetReps < currentReps ? 'neg' : 'zero')+'" id="si-reps-val">'+
+        (siIncrements.reps > 0 ? '+' : '') + siIncrements.reps + ' → ' + targetReps +
+      '</div>'+
+      '<button class="inc-btn" '+(isMax?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',1)">+</button>';
+  } else {
+    var el = document.getElementById('si-reps-val');
+    if (el) { el.textContent = (siIncrements.reps>0?'+':'')+siIncrements.reps; el.className='inc-value '+(siIncrements.reps>0?'pos':siIncrements.reps<0?'neg':'zero'); }
+  }
 }
 
 function saveSI() {
@@ -1997,7 +2108,7 @@ function showSessionDetail(idx) {
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
       return '<div style="margin-bottom:16px">'+
-        '<div class="font-bold" style="margin-bottom:4px">'+ex.icon+' '+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
+        '<div class="font-bold" style="margin-bottom:4px">'+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
         (e.sets||[]).map(function(set,i){return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+set.weight+'kg × '+set.reps+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';}).join('')+
         (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 '+e.notes+'</div>':'')+
         incHtml+
@@ -2036,7 +2147,7 @@ function renderProfilo() {
   sel.innerHTML='<option value="">Scegli un esercizio...</option>'+
     Object.keys(prs).map(function(id){
       var ex=findExercise(id);if(!ex)return'';
-      return '<option value="'+id+'">'+ex.icon+' '+ex.name+' ('+ex.muscle+')</option>';
+      return '<option value="'+id+'">'+ex.name+' ('+ex.muscle+')</option>';
     }).join('');
   // Restore previous selection if still valid
   if(prev && prs[prev]) sel.value=prev;
@@ -2052,7 +2163,7 @@ function renderPRDetail() {
   if(!pr||!ex){el.innerHTML='';return;}
   el.innerHTML=
     '<div class="flex justify-between items-center" style="padding:12px 0">'+
-      '<div><div class="font-bold" style="font-size:16px">'+ex.icon+' '+ex.name+'</div>'+
+      '<div><div class="font-bold" style="font-size:16px">'+ex.name+'</div>'+
       '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+ex.muscle+'</div></div>'+
       '<div style="text-align:right">'+
         '<div style="font-size:32px;font-weight:900;color:var(--accent);line-height:1">'+pr.weight+'kg</div>'+
@@ -2184,22 +2295,14 @@ function renderRetroExerciseList() {
 
   document.getElementById('retro-exercise-list').innerHTML = retroExercises.map(function(re, idx) {
     var ex = findExercise(re.exerciseId);
-    var name = ex ? (ex.icon+' '+ex.name) : re.exerciseId;
+    var name = ex ? (ex.name) : re.exerciseId;
     var inc = re.increments || {weight:0,sets:0,reps:0};
 
     var setsHtml = re.sets.map(function(s, si) {
-      var progression = getRepProgression(re.exerciseId);
-      var snappedReps = snapToProgression(s.reps||progression[0], progression);
-      var isMinR = snappedReps <= progression[0], isMaxR = snappedReps >= progression[progression.length-1];
-      var repSel = '<div style="display:flex;align-items:center;gap:2px;flex:1;justify-content:center">'+
-        '<button type="button" '+(isMinR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMinR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMinR?'default':'pointer')+';font-family:inherit;line-height:1" onclick="stepRetroRep('+idx+','+si+',-1)">−</button>'+
-        '<div style="font-size:14px;font-weight:700;min-width:22px;text-align:center">'+snappedReps+'</div>'+
-        '<button type="button" '+(isMaxR?'disabled':'')+' style="width:22px;height:28px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMaxR?'var(--text3)':'var(--text)')+';font-size:14px;font-weight:700;cursor:'+(isMaxR?'default':'pointer')+';font-family:inherit;line-height:1" onclick="stepRetroRep('+idx+','+si+',1)">+</button>'+
-      '</div>';
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
         '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+s.weight+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
-        repSel+
+        '<input type="number" class="set-inp" style="flex:1" placeholder="rip" value="'+s.reps+'" oninput="updateRetroSet('+idx+','+si+',\'reps\',this.value)" min="1">'+
         '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
           ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+(s.rpe===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
         '</select>'+
@@ -2236,15 +2339,22 @@ function renderRetroExerciseList() {
           '</div>'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',1)">+</button>'+
         '</div>'+
-        // reps
-        '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
-          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'reps\',-1)">−</button>'+
-          '<div style="text-align:center;min-width:36px">'+
-            '<div style="font-size:14px;font-weight:900;'+incClass(inc.reps)+'">'+incLabel(inc.reps)+'</div>'+
-            '<div style="font-size:9px;color:var(--text3)">rip</div>'+
-          '</div>'+
-          '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'reps\',1)">+</button>'+
-        '</div>'+
+        // reps — fixed step progression
+        (function() {
+          var progression = getRepProgression(re.exerciseId);
+          var currentReps = re.sets.length ? (re.sets[re.sets.length-1].reps || progression[0]) : progression[0];
+          var targetReps = snapToProgression(currentReps + inc.reps, progression);
+          var isMinR = targetReps <= progression[0], isMaxR = targetReps >= progression[progression.length-1];
+          var repColor = targetReps > currentReps ? 'var(--green)' : targetReps < currentReps ? 'var(--red)' : 'var(--text3)';
+          return '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
+            '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMinR?'opacity:0.3':'')+ '" '+(isMinR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',-1)">−</button>'+
+            '<div style="text-align:center;min-width:36px">'+
+              '<div style="font-size:13px;font-weight:900;color:'+repColor+'">'+(inc.reps>0?'+':'')+inc.reps+' → '+targetReps+'</div>'+
+              '<div style="font-size:9px;color:var(--text3)">rip ('+progression.join('→')+')</div>'+
+            '</div>'+
+            '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMaxR?'opacity:0.3':'')+ '" '+(isMaxR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',1)">+</button>'+
+          '</div>';
+        })()+
       '</div>'+
       '</div>';
 
@@ -2288,7 +2398,16 @@ function moveRetroExercise(idx, dir) {
 function updateRetroIncrement(exIdx, field, delta) {
   if (!retroExercises[exIdx].increments) retroExercises[exIdx].increments = {weight:0,sets:0,reps:0};
   var inc = retroExercises[exIdx].increments;
-  inc[field] = Math.round((inc[field] + delta) * 10) / 10;
+  if (field === 'reps') {
+    var re = retroExercises[exIdx];
+    var progression = getRepProgression(re.exerciseId);
+    var currentReps = re.sets.length ? (re.sets[re.sets.length-1].reps || progression[0]) : progression[0];
+    var targetReps = snapToProgression(currentReps + inc.reps, progression);
+    var newTarget = nextRep(targetReps, progression, delta);
+    inc.reps = newTarget - currentReps;
+  } else {
+    inc[field] = Math.round((inc[field] + delta) * 10) / 10;
+  }
   renderRetroExerciseList();
 }
 
@@ -2318,7 +2437,7 @@ function filterRetroExercises() {
   });
   document.getElementById('retro-exercise-picker-list').innerHTML = list.map(function(e){
     return '<div class="ex-picker-item" onclick="pickRetroExercise(\''+e.id+'\')">'+
-      '<div><div class="ex-picker-name">'+e.icon+' '+e.name+'</div><div class="ex-picker-cat">'+e.muscle+' · '+e.category+'</div></div>'+
+      '<div><div class="ex-picker-name">'+e.name+'</div><div class="ex-picker-cat">'+e.muscle+' · '+e.category+'</div></div>'+
       '<span style="color:var(--accent);font-size:18px">+</span></div>';
   }).join('') || '<div style="color:var(--text3);font-size:13px;padding:12px 0">Nessun risultato</div>';
 }
@@ -2439,6 +2558,36 @@ if (state.activeSession) {
 } else {
   renderHome();
 }
+
+// ============================================================
+// VISUAL VIEWPORT — keep modals above keyboard on mobile
+// ============================================================
+(function() {
+  if (!window.visualViewport) return;
+  function onViewportChange() {
+    var vv = window.visualViewport;
+    var offsetTop = window.innerHeight - vv.height - vv.offsetTop;
+    document.querySelectorAll('.modal-overlay.open').forEach(function(overlay) {
+      overlay.style.bottom = offsetTop + 'px';
+      overlay.style.top = vv.offsetTop + 'px';
+    });
+  }
+  window.visualViewport.addEventListener('resize', onViewportChange);
+  window.visualViewport.addEventListener('scroll', onViewportChange);
+
+  // Reset when modal closes
+  var origClose = window.closeModal;
+  window.closeModal = function(id) {
+    var el = document.getElementById(id);
+    if (el) { el.style.bottom = ''; el.style.top = ''; }
+    origClose(id);
+  };
+  var origOpen = window.openModal;
+  window.openModal = function(id) {
+    origOpen(id);
+    onViewportChange();
+  };
+})();
 </script>
 </body>
 </html>
