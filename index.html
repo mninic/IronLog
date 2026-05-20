@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="IronLog">
@@ -23,14 +23,14 @@
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased;position:fixed;width:100%}
 
-.app{display:flex;flex-direction:column;position:fixed;top:0;left:0;right:0;bottom:0;height:100%}
-.page{flex:1;overflow-y:auto;padding-bottom:calc(70px + var(--safe-bot));padding-top:calc(var(--safe-top) + 16px)}
+.app{display:flex;flex-direction:column;position:fixed;top:0;left:0;right:0;width:100%;height:var(--app-height,100dvh)}
+.page{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(70px + var(--safe-bot));padding-top:calc(var(--safe-top) + 16px);min-height:0}
 .page::-webkit-scrollbar{display:none}
 .page{display:none}.page.active{display:block}
 
-.navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:8px 0 calc(8px + var(--safe-bot));display:flex;z-index:100}
+.navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:8px 0 calc(8px + var(--safe-bot));display:flex;z-index:1000}
 .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;cursor:pointer;transition:all 0.2s}
 .nav-icon{font-size:22px;transition:transform 0.2s}
 .nav-label{font-size:9px;color:var(--text3);font-weight:600;letter-spacing:0.3px;transition:color 0.2s}
@@ -159,7 +159,7 @@ select.input{appearance:none}
 .muscle-bar-fill{height:100%;border-radius:3px;transition:width 0.6s ease}
 .chart-container{position:relative;height:200px;margin:4px 0}
 
-.empty-state{text-align:center;padding:60px 30px}
+.empty-state{text-align:center;padding:40px 30px}
 .empty-icon{font-size:48px;margin-bottom:16px}
 .empty-title{font-size:28px;font-weight:900;margin-bottom:8px}
 .empty-desc{color:var(--text2);font-size:14px;line-height:1.6}
@@ -2560,33 +2560,63 @@ if (state.activeSession) {
 }
 
 // ============================================================
-// VISUAL VIEWPORT — keep modals above keyboard on mobile
+// LOCK LAYOUT HEIGHT — prevents iOS Chrome/Safari keyboard from resizing the app
+// ============================================================
+(function() {
+  var lockedHeight = 0;
+  var keyboardOpen = false;
+
+  function lockHeight() {
+    // Always use window.innerHeight at load — before any keyboard interaction
+    // visualViewport can already be shrunk if called late, so we prefer innerHeight here
+    lockedHeight = window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', lockedHeight + 'px');
+  }
+
+  // Capture once at load, before any keyboard
+  lockHeight();
+  // Also capture on orientationchange (screen rotated, no keyboard)
+  window.addEventListener('orientationchange', function() {
+    setTimeout(lockHeight, 300);
+  });
+
+  // Track keyboard state via focus/blur on inputs
+  document.addEventListener('focus', function(e) {
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
+      keyboardOpen = true;
+    }
+  }, true);
+  document.addEventListener('blur', function(e) {
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
+      keyboardOpen = false;
+      // Re-lock after keyboard animates away (~300ms)
+      setTimeout(lockHeight, 350);
+    }
+  }, true);
+
+  // On resize: only update if keyboard is confirmed closed
+  window.addEventListener('resize', function() {
+    if (!keyboardOpen) {
+      setTimeout(lockHeight, 50);
+    }
+  });
+})();
+
+// ============================================================
+// VISUAL VIEWPORT — scroll focused input into view above keyboard
 // ============================================================
 (function() {
   if (!window.visualViewport) return;
-  function onViewportChange() {
-    var vv = window.visualViewport;
-    var offsetTop = window.innerHeight - vv.height - vv.offsetTop;
-    document.querySelectorAll('.modal-overlay.open').forEach(function(overlay) {
-      overlay.style.bottom = offsetTop + 'px';
-      overlay.style.top = vv.offsetTop + 'px';
-    });
-  }
-  window.visualViewport.addEventListener('resize', onViewportChange);
-  window.visualViewport.addEventListener('scroll', onViewportChange);
-
-  // Reset when modal closes
-  var origClose = window.closeModal;
-  window.closeModal = function(id) {
-    var el = document.getElementById(id);
-    if (el) { el.style.bottom = ''; el.style.top = ''; }
-    origClose(id);
-  };
-  var origOpen = window.openModal;
-  window.openModal = function(id) {
-    origOpen(id);
-    onViewportChange();
-  };
+  window.visualViewport.addEventListener('resize', function() {
+    var focused = document.activeElement;
+    if (focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA')) {
+      setTimeout(function() {
+        focused.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 100);
+    }
+  });
 })();
 </script>
 </body>
