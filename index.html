@@ -1598,7 +1598,8 @@ function buildSessionExercise(cfg) {
     var inc = last.increments || {weight:0,sets:0,reps:0};
     effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
     effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
-    effectiveCfg.sets   = Math.max(1, last.sets   + (inc.sets||0));
+    // sets ALWAYS comes from the template config — never overwritten by history
+    effectiveCfg.sets   = cfg.sets;
     // rest always comes from the template cfg, NOT from history (history doesn't store it reliably)
     effectiveCfg.rest   = cfg.rest || 120;
   }
