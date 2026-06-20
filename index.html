@@ -2079,22 +2079,9 @@ function showSessionDetail(idx) {
   currentDetailIdx = idx;
   var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  // Build a map exerciseId -> increments searching: 1) saved on exercise, 2) linked template, 3) any template
+  // Mostra solo gli incrementi salvati nella sessione — nessun fallback al template
   function getInc(exId, savedInc) {
     if (savedInc && (savedInc.weight || savedInc.sets || savedInc.reps)) return savedInc;
-    // Try linked template first
-    if (s.templateIdx != null) {
-      var tpl = state.templates[s.templateIdx];
-      if (tpl) {
-        var te = tpl.exercises.find(function(e){ return e.exerciseId === exId; });
-        if (te && te.increments && (te.increments.weight || te.increments.sets || te.increments.reps)) return te.increments;
-      }
-    }
-    // Fallback: search all templates
-    for (var t=0; t<state.templates.length; t++) {
-      var te = state.templates[t].exercises.find(function(e){ return e.exerciseId === exId; });
-      if (te && te.increments && (te.increments.weight || te.increments.sets || te.increments.reps)) return te.increments;
-    }
     return null;
   }
   document.getElementById('session-detail-content').innerHTML =
