@@ -1962,14 +1962,24 @@ function confirmFinishSession() {
       notes: ex.config.notes||'',
       increments: ex.config.increments || {weight:0,sets:0,reps:0}
     };
-  });
+  }).filter(function(ex){ return ex.sets.length > 0; }); // FIX 1: escludi esercizi senza serie completate
+
+  // FIX 1: non salvare la sessione se non è stata completata nessuna serie
+  if (totalSets === 0) {
+    state.activeSession = null;
+    saveState();
+    showToast('Nessuna serie completata — sessione non salvata');
+    showPage('home');
+    return;
+  }
+
   // Apply actual performed values + increments to template
   if (state.activeSession.templateIdx !== null) {
     var tpl = state.templates[state.activeSession.templateIdx];
     if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
       var cfg = tpl.exercises[i]; if (!cfg) return;
       var inc = sexe.config.increments || {weight:0,sets:0,reps:0};
-      // Use last performed work set values as the new base
+      // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
       var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
       if (workSets.length) {
         // Use max weight and most common reps from performed sets as new base
@@ -1978,13 +1988,9 @@ function confirmFinishSession() {
         cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
         cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
         cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
-      } else {
-        // No sets done: just apply increments to existing values
-        if (inc.weight) cfg.weight = Math.max(0, Math.round((cfg.weight + inc.weight) * 10) / 10);
-        if (inc.sets) cfg.sets = Math.max(1, cfg.sets + inc.sets);
-        if (inc.reps) cfg.reps = Math.max(1, cfg.reps + inc.reps);
+        cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
       }
-      cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
+      // Se nessuna serie completata: non toccare cfg, non applicare progressione
     });
   }
   state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx});
@@ -2102,9 +2108,12 @@ function showSessionDetail(idx) {
       var ex=findExercise(e.exerciseId);if(!ex)return'';
       var inc = getInc(e.exerciseId, e.increments);
       var incParts = [];
-      if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
-      if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
-      if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
+      // FIX 3: mostra "Prog. applicata" solo se ci sono serie completate per questo esercizio
+      if (e.sets && e.sets.length > 0) {
+        if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
+        if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
+        if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
+      }
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
