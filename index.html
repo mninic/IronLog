@@ -877,9 +877,9 @@ function findExercise(id) {
 // ============================================================
 const SUPA_URL = "https://tfjmavyilloopibmgbyl.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRmam1hdnlpbGxvb3BpYm1nYnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMTgwOTksImV4cCI6MjEwMjU5NDA5OX0.AjDDu5Fwsa4H4cK8zOswd0iMMP3cESkRMkqIUP5Trgc";
-let supabase;
+let supa;
 try {
-  supabase = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+  supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 } catch(e) {
   console.error('Supabase SDK non caricato:', e);
 }
@@ -907,7 +907,7 @@ async function syncToCloud() {
       builtinOverrides: state.builtinOverrides,
       profile: state.profile
     };
-    var { error } = await supabase.from('user_data').upsert({
+    var { error } = await supa.from('user_data').upsert({
       user_id: currentUser.id,
       state: toSave,
       updated_at: new Date().toISOString()
@@ -948,27 +948,27 @@ async function loadFromCloud() {
 
 // Auth functions
 async function authLogin() {
-  if (!supabase) { _authError('Errore caricamento SDK. Ricarica la pagina.'); return; }
+  if (!supa) { _authError('Errore caricamento SDK. Ricarica la pagina.'); return; }
   var email = document.getElementById('auth-email').value.trim();
   var password = document.getElementById('auth-password').value;
   if (!email || !password) { _authError('Inserisci email e password'); return; }
   _authSetLoading(true);
   try {
-  var { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  var { data, error } = await supa.auth.signInWithPassword({ email, password });
   if (error) { _authError(error.message); _authSetLoading(false); return; }
   await _onLogin(data.user);
   } catch(e) { _authError('Errore di rete. Riprova.'); _authSetLoading(false); }
 }
 
 async function authRegister() {
-  if (!supabase) { _authError('Errore caricamento SDK. Ricarica la pagina.'); return; }
+  if (!supa) { _authError('Errore caricamento SDK. Ricarica la pagina.'); return; }
   var email = document.getElementById('auth-email').value.trim();
   var password = document.getElementById('auth-password').value;
   if (!email) { _authError('Inserisci la tua email'); return; }
   if (password.length < 6) { _authError('Password minima 6 caratteri'); return; }
   _authSetLoading(true);
   try {
-    var { data, error } = await supabase.auth.signUp({ email, password });
+    var { data, error } = await supa.auth.signUp({ email, password });
     if (error) { _authError(error.message); _authSetLoading(false); return; }
     // signUp potrebbe richiedere conferma email — gestisci entrambi i casi
     if (data.user && data.user.id) {
@@ -981,7 +981,7 @@ async function authRegister() {
 }
 
 async function authLogout() {
-  await supabase.auth.signOut();
+  await supa.auth.signOut();
   currentUser = null;
   document.getElementById('auth-overlay').style.display = 'flex';
   document.getElementById('auth-email').value = '';
@@ -2793,21 +2793,29 @@ function _initApp() {
 }
 
 // Wire up auth buttons as soon as DOM is ready
-document.addEventListener('DOMContentLoaded', function() {
-  var loginBtn = document.getElementById('auth-login-btn');
-  var registerBtn = document.getElementById('auth-register-btn');
-  var pwdField = document.getElementById('auth-password');
-  if (loginBtn) loginBtn.addEventListener('click', authLogin);
-  if (registerBtn) registerBtn.addEventListener('click', authRegister);
-  if (pwdField) pwdField.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') authLogin();
-  });
-});
+// Wire auth buttons — works whether DOM is already ready or not
+(function wireAuthButtons() {
+  function attach() {
+    var loginBtn = document.getElementById('auth-login-btn');
+    var registerBtn = document.getElementById('auth-register-btn');
+    var pwdField = document.getElementById('auth-password');
+    if (loginBtn) loginBtn.addEventListener('click', authLogin);
+    if (registerBtn) registerBtn.addEventListener('click', authRegister);
+    if (pwdField) pwdField.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') authLogin();
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
 
 // ── Boot: check existing session, then show auth or auto-login ──────────
 (async function boot() {
   // Check if already logged in
-  var { data: { session } } = await supabase.auth.getSession();
+  var { data: { session } } = await supa.auth.getSession();
   if (session && session.user) {
     await _onLogin(session.user);
   } else {
