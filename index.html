@@ -2770,6 +2770,14 @@ function _initApp() {
 
 // ── Boot: check existing session, then show auth or auto-login ──────────
 (async function boot() {
+  // Wire up auth buttons here — after functions are defined
+  document.getElementById('auth-login-btn').addEventListener('click', authLogin);
+  document.getElementById('auth-register-btn').addEventListener('click', authRegister);
+  // Enter key on password field triggers login
+  document.getElementById('auth-password').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') authLogin();
+  });
+
   // Check if already logged in
   var { data: { session } } = await supabase.auth.getSession();
   if (session && session.user) {
@@ -2856,8 +2864,8 @@ function _initApp() {
   <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:12px">
     <input class="input" id="auth-email" type="email" placeholder="Email" autocomplete="email" style="font-size:16px">
     <input class="input" id="auth-password" type="password" placeholder="Password" autocomplete="current-password" style="font-size:16px">
-    <button class="btn btn-primary btn-full" id="auth-login-btn" onclick="authLogin()" style="font-size:16px;padding:14px">Accedi</button>
-    <button class="btn btn-ghost btn-full" id="auth-register-btn" onclick="authRegister()" style="font-size:15px">Crea account</button>
+    <button class="btn btn-primary btn-full" id="auth-login-btn" style="font-size:16px;padding:14px">Accedi</button>
+    <button class="btn btn-ghost btn-full" id="auth-register-btn" style="font-size:15px">Crea account</button>
   </div>
 
   <div id="auth-loading" style="display:none;margin-top:24px;color:var(--text2);font-size:14px">⏳ Caricamento...</div>
