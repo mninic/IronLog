@@ -981,12 +981,57 @@ async function authRegister() {
 }
 
 async function authLogout() {
+  if (_realtimeChannel) { supa.removeChannel(_realtimeChannel); _realtimeChannel = null; }
   await supa.auth.signOut();
   currentUser = null;
   document.getElementById('auth-overlay').style.display = 'flex';
   document.getElementById('auth-email').value = '';
   document.getElementById('auth-password').value = '';
   document.getElementById('auth-error').style.display = 'none';
+}
+
+let _realtimeChannel = null;
+
+function _subscribeRealtime() {
+  if (!currentUser || !supa) return;
+  // Unsubscribe from any previous channel
+  if (_realtimeChannel) {
+    supa.removeChannel(_realtimeChannel);
+    _realtimeChannel = null;
+  }
+  _realtimeChannel = supa
+    .channel('user_data_changes')
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'user_data',
+      filter: 'user_id=eq.' + currentUser.id
+    }, function(payload) {
+      // Another device updated our row — reload state from the payload
+      var p = payload.new.state;
+      if (!p) return;
+      // Don't overwrite if we are the ones who just saved (debounce guard)
+      if (_syncDebounceTimer) return;
+      state.templates = p.templates || [];
+      state.sessions = p.sessions || [];
+      state.customExercises = p.customExercises || [];
+      state.deletedBuiltins = p.deletedBuiltins || [];
+      state.hiddenExercises = p.hiddenExercises || [];
+      state.builtinOverrides = p.builtinOverrides || {};
+      state.profile = p.profile || {name:'Atleta',unit:'kg'};
+      _saveToLocal();
+      // Refresh current visible page
+      var activePage = document.querySelector('.page.active');
+      if (activePage) {
+        var pageId = activePage.id.replace('page-', '');
+        if (pageId === 'home') renderHome();
+        else if (pageId === 'storico') renderStorico();
+        else if (pageId === 'template') renderTemplates();
+        else if (pageId === 'profilo') renderProfilo();
+      }
+      showSyncIndicator('🔄 Aggiornato');
+    })
+    .subscribe();
 }
 
 async function _onLogin(user) {
@@ -1003,6 +1048,8 @@ async function _onLogin(user) {
   if (!loaded && (state.sessions.length || state.templates.length)) {
     await syncToCloud();
   }
+  // Start listening for changes from other devices
+  _subscribeRealtime();
 }
 
 function _authError(msg) {
