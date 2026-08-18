@@ -187,6 +187,7 @@ select.input{appearance:none}
 .mt-8{margin-top:8px}.mt-12{margin-top:12px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}
 .font-bold{font-weight:700}.text-sm{font-size:13px}.text-muted{color:var(--text2)}
 </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <div class="app">
@@ -304,6 +305,18 @@ select.input{appearance:none}
       </div>
     </div>
     <button class="btn btn-primary btn-full" onclick="saveProfile()">Salva</button>
+  </div>
+  <div class="card">
+    <div class="card-title">☁️ Account & Sync</div>
+    <div id="profilo-account-info" style="font-size:13px;color:var(--text2);margin-bottom:14px"></div>
+    <button class="btn btn-ghost btn-full" onclick="authLogout()" style="color:#ff4757;border-color:#ff4757;margin-bottom:0">Esci dall'account</button>
+  </div>
+  <div class="card">
+    <div class="card-title">💾 Backup dati</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Esporta i tuoi dati per fare un backup o importali da un altro dispositivo.</div>
+    <button class="btn btn-primary btn-full" onclick="exportData()" style="margin-bottom:10px">⬇️ Esporta JSON</button>
+    <button class="btn btn-ghost btn-full" onclick="document.getElementById('import-file-input').click()">⬆️ Importa JSON</button>
+    <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importData(event)">
   </div>
   <div style="height:20px"></div>
 </div>
@@ -836,45 +849,136 @@ function findExercise(id) {
 }
 
 // ============================================================
+// SUPABASE
+// ============================================================
+const SUPA_URL = "https://tfjmavyilloopibmgbyl.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRmam1hdnlpbGxvb3BpYm1nYnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMTgwOTksImV4cCI6MjEwMjU5NDA5OX0.AjDDu5Fwsa4H4cK8zOswd0iMMP3cESkRMkqIUP5Trgc";
+const supabase = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+let currentUser = null;
+let syncPending = false;
+
+function showSyncIndicator(text) {
+  var el = document.getElementById('sync-indicator');
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(el._hide);
+  if (text.startsWith('✅')) el._hide = setTimeout(function(){ el.style.display='none'; }, 2000);
+}
+
+async function syncToCloud() {
+  if (!currentUser) return;
+  showSyncIndicator('⏳ Sync...');
+  try {
+    var toSave = {
+      templates: state.templates, sessions: state.sessions,
+      customExercises: state.customExercises,
+      deletedBuiltins: state.deletedBuiltins,
+      hiddenExercises: state.hiddenExercises,
+      builtinOverrides: state.builtinOverrides,
+      profile: state.profile
+    };
+    var { error } = await supabase.from('user_data').upsert({
+      user_id: currentUser.id,
+      state: toSave,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+    if (error) throw error;
+    syncPending = false;
+    showSyncIndicator('✅ Salvato');
+  } catch(e) {
+    syncPending = true;
+    showSyncIndicator('⚠️ Offline');
+  }
+}
+
+async function loadFromCloud() {
+  if (!currentUser) return false;
+  try {
+    var { data, error } = await supabase
+      .from('user_data')
+      .select('state')
+      .eq('user_id', currentUser.id)
+      .single();
+    if (error || !data) return false;
+    var p = data.state;
+    state.templates = p.templates || [];
+    state.sessions = p.sessions || [];
+    state.customExercises = p.customExercises || [];
+    state.deletedBuiltins = p.deletedBuiltins || [];
+    state.hiddenExercises = p.hiddenExercises || [];
+    state.builtinOverrides = p.builtinOverrides || {};
+    state.profile = p.profile || {name:'Atleta',unit:'kg'};
+    // Also update localStorage as fallback
+    _saveToLocal();
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+// Auth functions
+async function authLogin() {
+  var email = document.getElementById('auth-email').value.trim();
+  var password = document.getElementById('auth-password').value;
+  _authSetLoading(true);
+  var { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { _authError(error.message); return; }
+  await _onLogin(data.user);
+}
+
+async function authRegister() {
+  var email = document.getElementById('auth-email').value.trim();
+  var password = document.getElementById('auth-password').value;
+  if (password.length < 6) { _authError('Password minima 6 caratteri'); return; }
+  _authSetLoading(true);
+  var { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) { _authError(error.message); return; }
+  await _onLogin(data.user);
+}
+
+async function authLogout() {
+  await supabase.auth.signOut();
+  currentUser = null;
+  document.getElementById('auth-overlay').style.display = 'flex';
+  document.getElementById('auth-email').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-error').style.display = 'none';
+}
+
+async function _onLogin(user) {
+  currentUser = user;
+  _authSetLoading(false);
+  // Try loading from cloud, fallback to localStorage
+  var loaded = await loadFromCloud();
+  if (!loaded) { loadStateLocal(); }
+  // Restore active session from localStorage regardless
+  _restoreActiveSession();
+  document.getElementById('auth-overlay').style.display = 'none';
+  _initApp();
+  // If we had pending local data and no cloud data, push it up
+  if (!loaded && (state.sessions.length || state.templates.length)) {
+    await syncToCloud();
+  }
+}
+
+function _authError(msg) {
+  _authSetLoading(false);
+  var el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function _authSetLoading(on) {
+  document.getElementById('auth-loading').style.display = on ? 'block' : 'none';
+  document.getElementById('auth-login-btn').disabled = on;
+  document.getElementById('auth-register-btn').disabled = on;
+}
+
+// ============================================================
 // STORAGE
 // ============================================================
-function loadState() {
-  try {
-    var s = localStorage.getItem('ironlog_v3');
-    if (s) {
-      var p = JSON.parse(s);
-      state.templates = p.templates || [];
-      state.sessions = p.sessions || [];
-      state.customExercises = p.customExercises || [];
-      state.deletedBuiltins = p.deletedBuiltins || [];
-      state.hiddenExercises = p.hiddenExercises || [];
-      state.builtinOverrides = p.builtinOverrides || {};
-      state.profile = p.profile || {name:'Atleta',unit:'kg'};
-      // Restore active session if present
-      if (p.activeSession) {
-        state.activeSession = p.activeSession;
-        // Restore exercise objects (ex field) which are not serialized
-        state.activeSession.exercises.forEach(function(ex) {
-          ex.ex = findExercise(ex.config.exerciseId);
-        });
-        // Restore rest timer if it was running
-        if (p.restEndTime && p.restSecondsMax) {
-          restEndTime = p.restEndTime;
-          restSecondsMax = p.restSecondsMax;
-          var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
-          if (remaining > 0) {
-            restSecondsLeft = remaining;
-            _scheduleRestTimer();
-          } else {
-            // Timer expired while page was closed
-            restEndTime = null;
-          }
-        }
-      }
-    }
-  } catch(e) {}
-}
-function saveState() {
+function _saveToLocal() {
   try {
     var toSave = {
       templates:state.templates, sessions:state.sessions,
@@ -884,7 +988,6 @@ function saveState() {
       builtinOverrides:state.builtinOverrides,
       profile:state.profile
     };
-    // Persist active session (without the 'ex' reference to avoid circular issues)
     if (state.activeSession) {
       var sessionCopy = JSON.parse(JSON.stringify(state.activeSession));
       sessionCopy.exercises.forEach(function(e){ delete e.ex; });
@@ -896,6 +999,59 @@ function saveState() {
     }
     localStorage.setItem('ironlog_v3', JSON.stringify(toSave));
   } catch(e) {}
+}
+
+function loadStateLocal() {
+  try {
+    var s = localStorage.getItem('ironlog_v3');
+    if (s) {
+      var p = JSON.parse(s);
+      state.templates = p.templates || [];
+      state.sessions = p.sessions || [];
+      state.customExercises = p.customExercises || [];
+      state.deletedBuiltins = p.deletedBuiltins || [];
+      state.hiddenExercises = p.hiddenExercises || [];
+      state.builtinOverrides = p.builtinOverrides || {};
+      state.profile = p.profile || {name:'Atleta',unit:'kg'};
+    }
+  } catch(e) {}
+}
+
+function _restoreActiveSession() {
+  try {
+    var s = localStorage.getItem('ironlog_v3');
+    if (!s) return;
+    var p = JSON.parse(s);
+    if (p.activeSession) {
+      state.activeSession = p.activeSession;
+      state.activeSession.exercises.forEach(function(ex) {
+        ex.ex = findExercise(ex.config.exerciseId);
+      });
+      if (p.restEndTime && p.restSecondsMax) {
+        restEndTime = p.restEndTime;
+        restSecondsMax = p.restSecondsMax;
+        var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+        if (remaining > 0) { restSecondsLeft = remaining; _scheduleRestTimer(); }
+        else { restEndTime = null; }
+      }
+    }
+  } catch(e) {}
+}
+
+function loadState() {
+  // Called at init — actual loading happens after auth
+  // Just load local as fallback so app is not broken before auth resolves
+  loadStateLocal();
+  _restoreActiveSession();
+}
+
+// saveState: save locally always + sync to cloud
+var _syncDebounceTimer = null;
+function saveState() {
+  _saveToLocal();
+  // Debounce cloud sync by 2s to avoid hammering on rapid changes
+  clearTimeout(_syncDebounceTimer);
+  _syncDebounceTimer = setTimeout(function(){ syncToCloud(); }, 2000);
 }
 
 // ============================================================
@@ -1982,7 +2138,6 @@ function confirmFinishSession() {
       // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
       var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
       if (workSets.length) {
-        // Use max weight and most common reps from performed sets as new base
         var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
         var lastSet = workSets[workSets.length-1];
         cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
@@ -2079,7 +2234,7 @@ function showSessionDetail(idx) {
   currentDetailIdx = idx;
   var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  // Mostra solo gli incrementi salvati nella sessione — nessun fallback al template
+  // FIX 3: mostra solo gli incrementi salvati nella sessione — nessun fallback al template
   function getInc(exId, savedInc) {
     if (savedInc && (savedInc.weight || savedInc.sets || savedInc.reps)) return savedInc;
     return null;
@@ -2095,12 +2250,9 @@ function showSessionDetail(idx) {
       var ex=findExercise(e.exerciseId);if(!ex)return'';
       var inc = getInc(e.exerciseId, e.increments);
       var incParts = [];
-      // FIX 3: mostra "Prog. applicata" solo se ci sono serie completate per questo esercizio
-      if (e.sets && e.sets.length > 0) {
-        if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
-        if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
-        if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
-      }
+      if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
+      if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
+      if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
@@ -2136,6 +2288,8 @@ function confirmDeleteSession() {
 // ============================================================
 function renderProfilo() {
   document.getElementById('profile-name').value=state.profile.name||'Atleta';
+  var accEl = document.getElementById('profilo-account-info');
+  if (accEl && currentUser) accEl.textContent = '✅ Connesso come ' + currentUser.email;
   document.querySelectorAll('#unit-chips .chip').forEach(function(c){c.classList.toggle('selected',c.textContent===state.profile.unit);});
   // Populate PR dropdown with exercises that have history
   var prs=calcPRs();
@@ -2192,6 +2346,44 @@ function saveProfile() {
   saveState();
   showToast('Profilo salvato');
   renderHome();
+}
+
+function exportData() {
+  var json = JSON.stringify(state, null, 2);
+  var blob = new Blob([json], {type: 'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  var date = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = 'ironlog-backup-' + date + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Backup esportato ✅');
+}
+
+function importData(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var imported = JSON.parse(e.target.result);
+      if (!imported.sessions || !imported.templates) {
+        showToast('File non valido ❌'); return;
+      }
+      if (!confirm('Importando sovrascriverai tutti i dati attuali. Continuare?')) return;
+      state = imported;
+      saveState();
+      renderHome();
+      showToast('Dati importati ✅');
+    } catch(err) {
+      showToast('Errore nel file JSON ❌');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
 // ============================================================
@@ -2522,10 +2714,10 @@ function saveRetroSession() {
 // ============================================================
 // INIT
 // ============================================================
-loadState();
-resumeSessionTimerIfActive();
-if (!state.templates.length) {
-  state.templates = [
+function _initApp() {
+  resumeSessionTimerIfActive();
+  if (!state.templates.length) {
+    state.templates = [
     {name:'Push A',color:'#e8ff47',notes:'Petto, spalle, tricipiti',exercises:[
       {exerciseId:'bp',sets:4,reps:8,weight:80,rest:180,rpe:'8',warmup:2,notes:'Scapole retratte',increments:{weight:2.5,sets:0,reps:0}},
       {exerciseId:'bpi',sets:3,reps:10,weight:60,rest:120,rpe:'7.5',warmup:1,notes:'',increments:{weight:1.25,sets:0,reps:0}},
@@ -2547,14 +2739,27 @@ if (!state.templates.length) {
       {exerciseId:'gcal',sets:4,reps:20,weight:60,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:5,sets:0,reps:0}},
     ]},
   ];
-  saveState();
+    saveState();
+  }
+  // If a session was in progress when page was closed, go straight to it
+  if (state.activeSession) {
+    showPage('allenamento');
+  } else {
+    renderHome();
+  }
 }
-// If a session was in progress when page was closed, go straight to it
-if (state.activeSession) {
-  showPage('allenamento');
-} else {
-  renderHome();
-}
+
+// ── Boot: check existing session, then show auth or auto-login ──────────
+(async function boot() {
+  // Check if already logged in
+  var { data: { session } } = await supabase.auth.getSession();
+  if (session && session.user) {
+    await _onLogin(session.user);
+  } else {
+    // Show auth overlay — app stays hidden until login
+    document.getElementById('auth-overlay').style.display = 'flex';
+  }
+})();
 
 // ============================================================
 // LOCK LAYOUT HEIGHT — prevents iOS Chrome/Safari keyboard from resizing the app
@@ -2616,5 +2821,36 @@ if (state.activeSession) {
   });
 })();
 </script>
+
+<!-- AUTH OVERLAY -->
+<div id="auth-overlay" style="
+  position:fixed;inset:0;background:var(--bg1);z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:32px 24px;gap:0;
+">
+  <div style="font-size:48px;margin-bottom:8px">🏋️</div>
+  <div style="font-size:28px;font-weight:900;color:var(--accent);letter-spacing:2px;margin-bottom:4px">IRONLOG</div>
+  <div style="font-size:13px;color:var(--text2);margin-bottom:32px">Il tuo diario di allenamento</div>
+
+  <div id="auth-error" style="display:none;background:rgba(255,71,71,0.15);border:1px solid #ff4757;border-radius:10px;padding:10px 14px;font-size:13px;color:#ff4757;width:100%;max-width:360px;margin-bottom:16px;text-align:center"></div>
+
+  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:12px">
+    <input class="input" id="auth-email" type="email" placeholder="Email" autocomplete="email" style="font-size:16px">
+    <input class="input" id="auth-password" type="password" placeholder="Password" autocomplete="current-password" style="font-size:16px">
+    <button class="btn btn-primary btn-full" id="auth-login-btn" onclick="authLogin()" style="font-size:16px;padding:14px">Accedi</button>
+    <button class="btn btn-ghost btn-full" id="auth-register-btn" onclick="authRegister()" style="font-size:15px">Crea account</button>
+  </div>
+
+  <div id="auth-loading" style="display:none;margin-top:24px;color:var(--text2);font-size:14px">⏳ Caricamento...</div>
+</div>
+
+<!-- SYNC STATUS indicator (top right) -->
+<div id="sync-indicator" style="
+  position:fixed;top:12px;right:12px;z-index:1000;
+  font-size:11px;padding:4px 10px;border-radius:20px;
+  background:rgba(0,0,0,0.6);color:var(--text2);
+  display:none;pointer-events:none;
+">⏳ Sync...</div>
+
 </body>
 </html>
