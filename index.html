@@ -187,6 +187,24 @@ select.input{appearance:none}
 .gap-8{gap:8px}.gap-12{gap:12px}
 .mt-8{margin-top:8px}.mt-12{margin-top:12px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}
 .font-bold{font-weight:700}.text-sm{font-size:13px}.text-muted{color:var(--text2)}
+
+/* MISURAZIONI */
+.mis-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin:0 16px 10px;padding:14px 16px;cursor:pointer;transition:transform 0.15s;position:relative}
+.mis-card:active{transform:scale(0.98)}
+.mis-date{font-size:11px;color:var(--accent);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px}
+.mis-weight{font-size:36px;font-weight:900;color:var(--text);line-height:1;margin-bottom:10px}
+.mis-weight span{font-size:18px;font-weight:400;color:var(--text2)}
+.mis-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mis-field{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px}
+.mis-field-val{font-size:18px;font-weight:700;color:var(--text);line-height:1}
+.mis-field-lbl{font-size:10px;color:var(--text2);margin-top:2px}
+.mis-delta-up{color:var(--red);font-size:11px;font-weight:700}
+.mis-delta-dn{color:var(--green);font-size:11px;font-weight:700}
+.mis-delta-0{color:var(--text3);font-size:11px}
+.mis-chart-tabs{display:flex;gap:0;margin:0 16px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.mis-chart-tab{flex:1;text-align:center;padding:9px 4px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.mis-chart-tab.active{background:var(--accent);color:#000}
+.mis-chart-tab:not(.active){background:var(--bg2);color:var(--text2)}
 </style>
 </head>
 <body>
@@ -321,6 +339,31 @@ select.input{appearance:none}
   <div style="height:20px"></div>
 </div>
 
+<!-- MISURAZIONI -->
+<div id="page-misurazioni" class="page">
+  <div class="page-header">
+    <div class="page-title">MISURAZIONI</div>
+    <div class="page-subtitle">Traccia le misure del tuo corpo</div>
+  </div>
+  <div style="padding:0 16px;margin-bottom:16px">
+    <button class="btn btn-primary btn-full" onclick="openAddMisurazione()">+ Nuova misurazione</button>
+  </div>
+  <div class="mis-chart-tabs" id="mis-chart-tabs">
+    <div class="mis-chart-tab active" data-field="weight" onclick="switchMisChart('weight',this)">Peso</div>
+    <div class="mis-chart-tab" data-field="chest" onclick="switchMisChart('chest',this)">Petto</div>
+    <div class="mis-chart-tab" data-field="abdomen" onclick="switchMisChart('abdomen',this)">Addome</div>
+    <div class="mis-chart-tab" data-field="rightBicep" onclick="switchMisChart('rightBicep',this)">Bicipite</div>
+    <div class="mis-chart-tab" data-field="rightQuad" onclick="switchMisChart('rightQuad',this)">Quad</div>
+  </div>
+  <div class="card" style="margin-top:0">
+    <div class="card-title" id="mis-chart-title">Peso nel tempo (kg)</div>
+    <div class="chart-container"><canvas id="chart-misurazioni"></canvas></div>
+  </div>
+  <div class="section-header"><div class="section-title">Storico</div></div>
+  <div id="mis-list"></div>
+  <div style="height:20px"></div>
+</div>
+
 <!-- ESERCIZI -->
 <div id="page-esercizi" class="page">
   <div class="page-header">
@@ -385,6 +428,7 @@ select.input{appearance:none}
   <div class="nav-item" onclick="showPage('template')" id="nav-template"><div class="nav-icon">📋</div><div class="nav-label">TEMPLATE</div></div>
   <div class="nav-item" onclick="showPage('esercizi')" id="nav-esercizi"><div class="nav-icon">🏋️</div><div class="nav-label">ESERCIZI</div></div>
   <div class="nav-item" onclick="showPage('storico')" id="nav-storico"><div class="nav-icon">📈</div><div class="nav-label">STORICO</div></div>
+  <div class="nav-item" onclick="showPage('misurazioni')" id="nav-misurazioni"><div class="nav-icon">📏</div><div class="nav-label">CORPO</div></div>
   <div class="nav-item" onclick="showPage('profilo')" id="nav-profilo"><div class="nav-icon">👤</div><div class="nav-label">PROFILO</div></div>
 </nav>
 </div>
@@ -720,6 +764,64 @@ select.input{appearance:none}
   </div>
 </div>
 
+<!-- MODAL: Misurazione -->
+<div class="modal-overlay" id="modal-misurazione">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="mis-modal-title">Nuova misurazione</div>
+    <input type="hidden" id="mis-editing-id">
+    <div class="input-group">
+      <label class="input-label">Data</label>
+      <input type="date" class="input" id="mis-date">
+    </div>
+    <div class="divider"></div>
+    <div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Corpo</div>
+    <div class="flex gap-8 mb-12">
+      <div style="flex:1">
+        <label class="input-label">Peso (kg)</label>
+        <input type="number" class="input" id="mis-weight" placeholder="es. 82.5" min="0" step="0.1">
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Circonferenze (cm)</div>
+    <div class="flex gap-8 mb-8">
+      <div style="flex:1">
+        <label class="input-label">Petto</label>
+        <input type="number" class="input" id="mis-chest" placeholder="es. 100" min="0" step="0.5">
+      </div>
+      <div style="flex:1">
+        <label class="input-label">Addome</label>
+        <input type="number" class="input" id="mis-abdomen" placeholder="es. 85" min="0" step="0.5">
+      </div>
+    </div>
+    <div class="flex gap-8 mb-8">
+      <div style="flex:1">
+        <label class="input-label">Bicipite dx</label>
+        <input type="number" class="input" id="mis-right-bicep" placeholder="es. 38" min="0" step="0.5">
+      </div>
+      <div style="flex:1">
+        <label class="input-label">Bicipite sx</label>
+        <input type="number" class="input" id="mis-left-bicep" placeholder="es. 37.5" min="0" step="0.5">
+      </div>
+    </div>
+    <div class="flex gap-8 mb-12">
+      <div style="flex:1">
+        <label class="input-label">Quadricipite dx</label>
+        <input type="number" class="input" id="mis-right-quad" placeholder="es. 58" min="0" step="0.5">
+      </div>
+      <div style="flex:1">
+        <label class="input-label">Quadricipite sx</label>
+        <input type="number" class="input" id="mis-left-quad" placeholder="es. 57.5" min="0" step="0.5">
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-misurazione')">Annulla</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveMisurazione()">Salva</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -828,7 +930,7 @@ const BUILTIN_EXERCISES = [
 // ============================================================
 // STATE
 // ============================================================
-let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], hiddenExercises:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null };
+let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], hiddenExercises:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null, misurazioni:[] };
 
 // temp state
 let editingTemplateIdx = null;
@@ -905,7 +1007,8 @@ async function syncToCloud() {
       deletedBuiltins: state.deletedBuiltins,
       hiddenExercises: state.hiddenExercises,
       builtinOverrides: state.builtinOverrides,
-      profile: state.profile
+      profile: state.profile,
+      misurazioni: state.misurazioni
     };
     var { error } = await supa.from('user_data').upsert({
       user_id: currentUser.id,
@@ -938,6 +1041,7 @@ async function loadFromCloud() {
     state.hiddenExercises = p.hiddenExercises || [];
     state.builtinOverrides = p.builtinOverrides || {};
     state.profile = p.profile || {name:'Atleta',unit:'kg'};
+    state.misurazioni = p.misurazioni || [];
     // Also update localStorage as fallback
     _saveToLocal();
     return true;
@@ -1019,6 +1123,7 @@ function _subscribeRealtime() {
       state.hiddenExercises = p.hiddenExercises || [];
       state.builtinOverrides = p.builtinOverrides || {};
       state.profile = p.profile || {name:'Atleta',unit:'kg'};
+      state.misurazioni = p.misurazioni || [];
       _saveToLocal();
       // Refresh current visible page
       var activePage = document.querySelector('.page.active');
@@ -1076,7 +1181,8 @@ function _saveToLocal() {
       deletedBuiltins:state.deletedBuiltins,
       hiddenExercises:state.hiddenExercises,
       builtinOverrides:state.builtinOverrides,
-      profile:state.profile
+      profile:state.profile,
+      misurazioni:state.misurazioni
     };
     if (state.activeSession) {
       var sessionCopy = JSON.parse(JSON.stringify(state.activeSession));
@@ -1103,6 +1209,7 @@ function loadStateLocal() {
       state.hiddenExercises = p.hiddenExercises || [];
       state.builtinOverrides = p.builtinOverrides || {};
       state.profile = p.profile || {name:'Atleta',unit:'kg'};
+      state.misurazioni = p.misurazioni || [];
     }
   } catch(e) {}
 }
@@ -1157,6 +1264,7 @@ function showPage(page) {
   if (page==='template') renderTemplates();
   if (page==='storico') renderStorico();
   if (page==='esercizi') renderEsercizi();
+  if (page==='misurazioni') renderMisurazioni();
   if (page==='profilo') renderProfilo();
 }
 
@@ -2902,6 +3010,187 @@ function _initApp() {
     document.getElementById('auth-overlay').style.display = 'flex';
   }
 })();
+
+// ============================================================
+// MISURAZIONI
+// ============================================================
+var MIS_FIELDS = [
+  {key:'weight',     label:'Peso',          unit:'kg'},
+  {key:'chest',      label:'Petto',          unit:'cm'},
+  {key:'abdomen',    label:'Addome',         unit:'cm'},
+  {key:'rightBicep', label:'Bicipite dx',    unit:'cm'},
+  {key:'leftBicep',  label:'Bicipite sx',    unit:'cm'},
+  {key:'rightQuad',  label:'Quadricipite dx',unit:'cm'},
+  {key:'leftQuad',   label:'Quadricipite sx',unit:'cm'},
+];
+var misChartField = 'weight';
+var misChartInstance = null;
+
+function openAddMisurazione() {
+  document.getElementById('mis-modal-title').textContent = 'Nuova misurazione';
+  document.getElementById('mis-editing-id').value = '';
+  var today = new Date();
+  var yyyy = today.getFullYear();
+  var mm = String(today.getMonth()+1).padStart(2,'0');
+  var dd = String(today.getDate()).padStart(2,'0');
+  document.getElementById('mis-date').value = yyyy+'-'+mm+'-'+dd;
+  ['mis-weight','mis-chest','mis-abdomen','mis-right-bicep','mis-left-bicep','mis-right-quad','mis-left-quad'].forEach(function(id){
+    document.getElementById(id).value = '';
+  });
+  openModal('modal-misurazione');
+}
+
+function openEditMisurazione(id) {
+  var m = state.misurazioni.find(function(x){ return x.id === id; });
+  if (!m) return;
+  document.getElementById('mis-modal-title').textContent = 'Modifica misurazione';
+  document.getElementById('mis-editing-id').value = id;
+  document.getElementById('mis-date').value = m.date;
+  document.getElementById('mis-weight').value      = m.weight      != null ? m.weight      : '';
+  document.getElementById('mis-chest').value       = m.chest       != null ? m.chest       : '';
+  document.getElementById('mis-abdomen').value     = m.abdomen     != null ? m.abdomen     : '';
+  document.getElementById('mis-right-bicep').value = m.rightBicep  != null ? m.rightBicep  : '';
+  document.getElementById('mis-left-bicep').value  = m.leftBicep   != null ? m.leftBicep   : '';
+  document.getElementById('mis-right-quad').value  = m.rightQuad   != null ? m.rightQuad   : '';
+  document.getElementById('mis-left-quad').value   = m.leftQuad    != null ? m.leftQuad    : '';
+  openModal('modal-misurazione');
+}
+
+function saveMisurazione() {
+  var dateVal = document.getElementById('mis-date').value;
+  if (!dateVal) { showToast('Inserisci una data'); return; }
+  function fv(id) { var v = parseFloat(document.getElementById(id).value); return isNaN(v) ? null : v; }
+  var editingId = document.getElementById('mis-editing-id').value;
+  var record = {
+    id:         editingId || ('mis_'+Date.now()),
+    date:       dateVal,
+    weight:     fv('mis-weight'),
+    chest:      fv('mis-chest'),
+    abdomen:    fv('mis-abdomen'),
+    rightBicep: fv('mis-right-bicep'),
+    leftBicep:  fv('mis-left-bicep'),
+    rightQuad:  fv('mis-right-quad'),
+    leftQuad:   fv('mis-left-quad'),
+  };
+  if (editingId) {
+    var idx = state.misurazioni.findIndex(function(x){ return x.id === editingId; });
+    if (idx !== -1) state.misurazioni[idx] = record;
+  } else {
+    state.misurazioni.push(record);
+  }
+  state.misurazioni.sort(function(a,b){ return b.date.localeCompare(a.date); });
+  saveState();
+  closeModal('modal-misurazione');
+  renderMisurazioni();
+  showToast('Misurazione salvata ✓');
+}
+
+function deleteMisurazione(id) {
+  if (!confirm('Eliminare questa misurazione?')) return;
+  state.misurazioni = state.misurazioni.filter(function(x){ return x.id !== id; });
+  saveState();
+  renderMisurazioni();
+  showToast('Misurazione eliminata');
+}
+
+function switchMisChart(field, el) {
+  misChartField = field;
+  document.querySelectorAll('.mis-chart-tab').forEach(function(t){ t.classList.remove('active'); });
+  el.classList.add('active');
+  renderMisChart();
+}
+
+function renderMisChart() {
+  var fieldMeta = MIS_FIELDS.find(function(f){ return f.key === misChartField; }) || MIS_FIELDS[0];
+  document.getElementById('mis-chart-title').textContent = fieldMeta.label + ' nel tempo (' + fieldMeta.unit + ')';
+  var sorted = state.misurazioni.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
+  var labels = [], data = [];
+  sorted.forEach(function(m){
+    if (m[misChartField] != null) {
+      labels.push(new Date(m.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'}));
+      data.push(m[misChartField]);
+    }
+  });
+  if (misChartInstance) { misChartInstance.destroy(); misChartInstance = null; }
+  var ctx = document.getElementById('chart-misurazioni').getContext('2d');
+  misChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        borderColor: '#e8ff47',
+        backgroundColor: 'rgba(232,255,71,0.08)',
+        borderWidth: 2, fill: true, tension: 0.35,
+        pointBackgroundColor: '#e8ff47',
+        pointRadius: labels.length < 20 ? 4 : 2,
+        pointHoverRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        label: function(ctx) { return ctx.parsed.y + ' ' + fieldMeta.unit; }
+      }}},
+      scales: {
+        x: { grid:{color:'rgba(255,255,255,0.05)'}, ticks:{color:'#666',font:{size:10}} },
+        y: { grid:{color:'rgba(255,255,255,0.05)'}, ticks:{color:'#666',font:{size:10}} }
+      }
+    }
+  });
+}
+
+function renderMisList() {
+  if (!state.misurazioni.length) {
+    document.getElementById('mis-list').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">📏</div>'+
+      '<div class="empty-title">Nessuna misurazione</div>'+
+      '<div class="empty-desc">Aggiungi la prima misurazione per tracciare i progressi del tuo corpo</div></div>';
+    return;
+  }
+  var sorted = state.misurazioni; // already desc by date
+  var html = sorted.map(function(m, i) {
+    var prev = sorted[i+1] || null;
+    var dateStr = new Date(m.date).toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'long',year:'numeric'});
+    function deltaHtml(field) {
+      if (m[field] == null || !prev || prev[field] == null) return '';
+      var diff = Math.round((m[field] - prev[field]) * 10) / 10;
+      if (diff === 0) return ' <span class="mis-delta-0">±0</span>';
+      var bad = (field === 'weight' || field === 'abdomen') ? diff > 0 : diff < 0;
+      return ' <span class="'+(bad?'mis-delta-up':'mis-delta-dn')+'">'+(diff>0?'+':'')+diff+'</span>';
+    }
+    function fieldBlock(field, label) {
+      if (m[field] == null) return '';
+      var meta = MIS_FIELDS.find(function(f){ return f.key===field; });
+      return '<div class="mis-field">'+
+        '<div class="mis-field-val">'+m[field]+' <span style="font-size:11px;color:var(--text2);font-weight:400">'+meta.unit+'</span>'+deltaHtml(field)+'</div>'+
+        '<div class="mis-field-lbl">'+label+'</div></div>';
+    }
+    return '<div class="mis-card">'+
+      '<div class="flex justify-between items-center" style="margin-bottom:6px">'+
+        '<div class="mis-date">'+dateStr+'</div>'+
+        '<div class="flex gap-8">'+
+          '<button class="btn btn-xs btn-secondary" onclick="openEditMisurazione(\''+m.id+'\')">Modifica</button>'+
+          '<button class="btn btn-xs btn-danger" onclick="deleteMisurazione(\''+m.id+'\')">Elimina</button>'+
+        '</div>'+
+      '</div>'+
+      (m.weight != null ? '<div class="mis-weight">'+m.weight+'<span> kg'+deltaHtml('weight')+'</span></div>' : '')+
+      '<div class="mis-grid">'+
+        fieldBlock('chest','Petto')+
+        fieldBlock('abdomen','Addome')+
+        fieldBlock('rightBicep','Bicipite dx')+
+        fieldBlock('leftBicep','Bicipite sx')+
+        fieldBlock('rightQuad','Quad dx')+
+        fieldBlock('leftQuad','Quad sx')+
+      '</div></div>';
+  }).join('');
+  document.getElementById('mis-list').innerHTML = html;
+}
+
+function renderMisurazioni() {
+  renderMisChart();
+  renderMisList();
+}
 
 // ============================================================
 // LOCK LAYOUT HEIGHT — prevents iOS Chrome/Safari keyboard from resizing the app
