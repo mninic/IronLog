@@ -1813,45 +1813,69 @@ function renderAllenamento() {
   }
 }
 
-// Returns {sets, reps, weight, increments} from the most recent session containing exId
-function getLastSessionDataForExercise(exId) {
-  for (var i = state.sessions.length - 1; i >= 0; i--) {
-    var s = state.sessions[i];
-    var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
-    if (e && e.sets && e.sets.length) {
-      var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
-      var setsToUse = workSets.length ? workSets : e.sets;
-      var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
-      var lastSet = setsToUse[setsToUse.length-1];
-      var rest = (e.config && e.config.rest) ? e.config.rest : 120;
-      return {
-        sets: setsToUse.length,
-        reps: lastSet.reps || 10,
-        weight: maxW,
-        rest: rest,
-        increments: e.increments || {weight:0,sets:0,reps:0}
-      };
+// Returns {sets, reps, weight} from the most recent session for exId
+// filtered by templateIdx when provided — so each template gets its own progression history
+function getLastSessionDataForExercise(exId, templateIdx) {
+  // First pass: look for sessions from the same template
+  if (templateIdx !== null && templateIdx !== undefined) {
+    for (var i = state.sessions.length - 1; i >= 0; i--) {
+      var s = state.sessions[i];
+      if (s.templateIdx !== templateIdx) continue;
+      var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
+      if (e && e.sets && e.sets.length) {
+        var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
+        var setsToUse = workSets.length ? workSets : e.sets;
+        var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
+        var lastSet = setsToUse[setsToUse.length-1];
+        var rest = (e.config && e.config.rest) ? e.config.rest : 120;
+        return {
+          sets: setsToUse.length,
+          reps: lastSet.reps || 10,
+          weight: maxW,
+          rest: rest
+          // NOTE: increments are NOT read from history — they always come from the template cfg
+        };
+      }
+    }
+    // No session found for this template → return null so the template cfg values are used as-is
+    return null;
+  }
+  // Fallback (blank session / no templateIdx): look across all sessions
+  for (var j = state.sessions.length - 1; j >= 0; j--) {
+    var sj = state.sessions[j];
+    var ej = (sj.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
+    if (ej && ej.sets && ej.sets.length) {
+      var wj = ej.sets.filter(function(st){ return st.type !== 'warmup'; });
+      var sj2 = wj.length ? wj : ej.sets;
+      var mj = Math.max.apply(null, sj2.map(function(st){ return st.weight||0; }));
+      var lj = sj2[sj2.length-1];
+      return { sets: sj2.length, reps: lj.reps || 10, weight: mj, rest: 120 };
     }
   }
   return null;
 }
 
-function buildSessionExercise(cfg) {
+function buildSessionExercise(cfg, templateIdx) {
   var ex = findExercise(cfg.exerciseId);
-  var last = getLastSessionDataForExercise(cfg.exerciseId);
+  // Look for the last session from THIS same template only
+  var last = getLastSessionDataForExercise(cfg.exerciseId, templateIdx);
   var effectiveCfg = Object.assign({}, cfg);
+
   if (last) {
-    var inc = last.increments || {weight:0,sets:0,reps:0};
+    // Weight and reps come from actual last performance in this template's history
+    // Increments always come from the template cfg — never from history — so they
+    // stay isolated per-template even when the same exercise appears in multiple templates
+    var inc = cfg.increments || {weight:0, sets:0, reps:0};
     effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
-    effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
-    // sets ALWAYS comes from the template config — never overwritten by history
+    effectiveCfg.reps   = Math.max(1, last.reps + (inc.reps||0));
+    // sets and rest always from template cfg
     effectiveCfg.sets   = cfg.sets;
-    // rest always comes from the template cfg, NOT from history (history doesn't store it reliably)
     effectiveCfg.rest   = cfg.rest || 120;
   }
-  // Progression and RPE are zeroed — user sets them fresh during this session
+  // Start each session with zero progression delta — user adjusts during the workout
   effectiveCfg.increments = {weight:0, sets:0, reps:0};
   effectiveCfg.rpe = '';
+
   var sets = [];
   var wuCount = effectiveCfg.warmup || 0;
   var wuPcts = wuCount === 1 ? [0.75] : wuCount === 2 ? [0.50, 0.75] : wuCount === 3 ? [0.25, 0.50, 0.75] : [];
@@ -1865,7 +1889,7 @@ function buildSessionExercise(cfg) {
 
 function startSessionFromTemplate(idx) {
   var t = state.templates[idx];
-  state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(buildSessionExercise)};
+  state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(function(cfg){ return buildSessionExercise(cfg, idx); })};
   startSessionTimer();
   showPage('allenamento');
 }
@@ -2219,23 +2243,31 @@ function confirmFinishSession() {
     return;
   }
 
-  // Apply actual performed values + increments to template
+  // Apply actual performed values + in-session progression delta to THIS template only.
+  // The "increments" stored in the template cfg are the user's STANDING setting (e.g. +2.5kg
+  // every session). The "in-session delta" (sexe.config.increments) is what the user chose
+  // during this specific workout via the Progressione panel. We apply the in-session delta
+  // to the template's base values, then restore the standing increment so it is ready for
+  // the next session. This way two templates that share the same exercise never interfere.
   if (state.activeSession.templateIdx !== null) {
     var tpl = state.templates[state.activeSession.templateIdx];
     if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
       var cfg = tpl.exercises[i]; if (!cfg) return;
-      var inc = sexe.config.increments || {weight:0,sets:0,reps:0};
-      // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
+      // In-session delta chosen by the user during this workout
+      var sessionDelta = sexe.config.increments || {weight:0, sets:0, reps:0};
       var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
       if (workSets.length) {
         var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
         var lastSet = workSets[workSets.length-1];
-        cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
-        cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
-        cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
-        cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
+        // Write back: actual performed weight/reps/sets + the in-session delta the user set
+        cfg.weight = Math.max(0, Math.round((maxW + (sessionDelta.weight||0)) * 10) / 10);
+        cfg.reps   = Math.max(1, lastSet.reps + (sessionDelta.reps||0));
+        cfg.sets   = Math.max(1, workSets.length + (sessionDelta.sets||0));
+        // Keep the standing increment (cfg.increments) exactly as the user configured it
+        // in the template — do NOT overwrite it with the in-session delta.
+        // The in-session delta is already applied above to weight/reps/sets.
       }
-      // Se nessuna serie completata: non toccare cfg, non applicare progressione
+      // If no sets completed for this exercise: leave cfg untouched
     });
   }
   state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx});
