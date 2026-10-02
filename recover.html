@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IronLog — Recupero Dati</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a0a; color:#f0f0f0; font-family:-apple-system,sans-serif; padding:24px 20px; }
+h1 { font-size:28px; font-weight:900; color:#e8ff47; margin-bottom:6px; }
+.sub { font-size:14px; color:#999; margin-bottom:28px; line-height:1.5; }
+.card { background:#111; border:1px solid #2a2a2a; border-radius:14px; padding:16px; margin-bottom:16px; }
+.card-title { font-size:11px; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; }
+.stat { font-size:32px; font-weight:900; color:#e8ff47; line-height:1; }
+.stat-label { font-size:13px; color:#999; margin-top:2px; }
+.stats-row { display:flex; gap:12px; flex-wrap:wrap; }
+.stat-box { flex:1; min-width:80px; }
+.btn { display:block; width:100%; padding:14px; border-radius:10px; border:none; font-size:16px; font-weight:700; cursor:pointer; margin-bottom:12px; font-family:inherit; }
+.btn-primary { background:#e8ff47; color:#000; }
+.btn-secondary { background:#1a1a1a; color:#f0f0f0; border:1px solid #333; }
+.btn:active { opacity:0.8; transform:scale(0.98); }
+.ok { background:rgba(46,213,115,0.15); border:1px solid rgba(46,213,115,0.3); border-radius:10px; padding:12px 14px; color:#2ed573; font-weight:600; font-size:14px; margin-bottom:16px; }
+.err { background:rgba(255,71,87,0.15); border:1px solid rgba(255,71,87,0.3); border-radius:10px; padding:12px 14px; color:#ff4757; font-weight:600; font-size:14px; margin-bottom:16px; }
+.warn { background:rgba(255,159,67,0.15); border:1px solid rgba(255,159,67,0.3); border-radius:10px; padding:12px 14px; color:#ff9f43; font-size:13px; margin-bottom:16px; line-height:1.5; }
+.json-box { background:#0a0a0a; border:1px solid #2a2a2a; border-radius:8px; padding:12px; font-size:11px; color:#666; word-break:break-all; max-height:160px; overflow-y:auto; margin-top:10px; font-family:monospace; }
+.hidden { display:none; }
+.step { font-size:13px; color:#999; line-height:1.8; }
+.step b { color:#e8ff47; }
+</style>
+</head>
+<body>
+
+<h1>Recupero Dati</h1>
+<p class="sub">Questa pagina legge i dati salvati localmente sul tuo iPhone e te li esporta in sicurezza.</p>
+
+<div id="status-box"></div>
+
+<div id="data-section" class="hidden">
+  <div class="card">
+    <div class="card-title">Dati trovati</div>
+    <div class="stats-row" id="stats-row"></div>
+  </div>
+
+  <button class="btn btn-primary" onclick="downloadJSON()">⬇️ Scarica backup JSON</button>
+  <button class="btn btn-secondary" onclick="copyToClipboard()">📋 Copia negli appunti</button>
+
+  <div class="warn">
+    <b>Dopo aver scaricato il file:</b><br>
+    1. Mandalo a te stesso via iMessage o email<br>
+    2. Conservalo come backup<br>
+    3. Puoi reimportarlo nell'app in futuro
+  </div>
+
+  <div class="card">
+    <div class="card-title">Anteprima dati (raw)</div>
+    <div class="json-box" id="json-preview"></div>
+  </div>
+</div>
+
+<div id="empty-section" class="hidden">
+  <div class="err">Nessun dato trovato in localStorage per questa app.</div>
+  <div class="card">
+    <div class="card-title">Possibili cause</div>
+    <p class="step">
+      • Stai usando un browser diverso da quello con cui usi IronLog<br>
+      • I dati sono già stati sovrascritti dal sync con Supabase<br>
+      • La modalità di navigazione privata è attiva
+    </p>
+  </div>
+  <div class="warn">
+    <b>Prova questo:</b><br>
+    Assicurati di aprire questa pagina con <b>lo stesso Safari</b> che usi normalmente per IronLog, <b>non</b> in modalità privata.
+  </div>
+</div>
+
+<script>
+var DATA_KEY = 'ironlog_v3';
+var rawData = null;
+var parsedData = null;
+
+function init() {
+  try {
+    rawData = localStorage.getItem(DATA_KEY);
+    if (!rawData) {
+      // Try older keys too
+      rawData = localStorage.getItem('ironlog_v2') || localStorage.getItem('ironlog');
+    }
+    if (!rawData) {
+      showEmpty();
+      return;
+    }
+    parsedData = JSON.parse(rawData);
+    showData();
+  } catch(e) {
+    document.getElementById('status-box').innerHTML =
+      '<div class="err">Errore nella lettura: ' + e.message + '</div>';
+  }
+}
+
+function showData() {
+  document.getElementById('status-box').innerHTML =
+    '<div class="ok">✓ Dati trovati nel localStorage di questo dispositivo!</div>';
+  document.getElementById('data-section').classList.remove('hidden');
+
+  var sessions   = (parsedData.sessions || []).length;
+  var templates  = (parsedData.templates || []).length;
+  var exercises  = (parsedData.customExercises || []).length;
+  var mis        = (parsedData.misurazioni || []).length;
+
+  document.getElementById('stats-row').innerHTML =
+    statBox(sessions,   'Sessioni') +
+    statBox(templates,  'Template') +
+    statBox(exercises,  'Esercizi custom') +
+    statBox(mis,        'Misurazioni');
+
+  // Show last session date if available
+  if (sessions > 0) {
+    var lastSession = parsedData.sessions[parsedData.sessions.length - 1];
+    if (lastSession && lastSession.date) {
+      var d = new Date(lastSession.date).toLocaleDateString('it-IT', {day:'numeric',month:'long',year:'numeric'});
+      document.getElementById('stats-row').innerHTML +=
+        '<div style="width:100%;margin-top:10px;font-size:13px;color:#999">Ultima sessione: <b style="color:#e8ff47">' + d + '</b></div>';
+    }
+  }
+
+  document.getElementById('json-preview').textContent = JSON.stringify(parsedData, null, 2).substring(0, 2000) + '\n\n[... continua ...]';
+}
+
+function showEmpty() {
+  document.getElementById('status-box').innerHTML = '';
+  document.getElementById('empty-section').classList.remove('hidden');
+}
+
+function statBox(val, label) {
+  return '<div class="stat-box"><div class="stat">' + val + '</div><div class="stat-label">' + label + '</div></div>';
+}
+
+function downloadJSON() {
+  if (!rawData) return;
+  var timestamp = new Date().toISOString().slice(0,10);
+  var filename = 'ironlog-backup-' + timestamp + '.json';
+  var blob = new Blob([rawData], {type: 'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('File scaricato: ' + filename);
+}
+
+function copyToClipboard() {
+  if (!rawData) return;
+  navigator.clipboard.writeText(rawData).then(function() {
+    showToast('Copiato negli appunti!');
+  }).catch(function() {
+    // Fallback for older browsers
+    var ta = document.createElement('textarea');
+    ta.value = rawData;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('Copiato negli appunti!');
+  });
+}
+
+var toastEl = null;
+function showToast(msg) {
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid #333;border-radius:30px;padding:10px 20px;font-size:14px;font-weight:600;color:#f0f0f0;white-space:nowrap;z-index:999;transition:opacity 0.3s;';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.textContent = msg;
+  toastEl.style.opacity = '1';
+  setTimeout(function(){ toastEl.style.opacity = '0'; }, 2500);
+}
+
+init();
+</script>
+</body>
+</html>
