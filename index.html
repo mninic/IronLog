@@ -187,10 +187,7 @@ select.input{appearance:none}
 .gap-8{gap:8px}.gap-12{gap:12px}
 .mt-8{margin-top:8px}.mt-12{margin-top:12px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}
 .font-bold{font-weight:700}.text-sm{font-size:13px}.text-muted{color:var(--text2)}
-
-/* MISURAZIONI */
-.mis-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin:0 16px 10px;padding:14px 16px;cursor:pointer;transition:transform 0.15s;position:relative}
-.mis-card:active{transform:scale(0.98)}
+.mis-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin:0 16px 10px;padding:14px 16px;position:relative}
 .mis-date{font-size:11px;color:var(--accent);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px}
 .mis-weight{font-size:36px;font-weight:900;color:var(--text);line-height:1;margin-bottom:10px}
 .mis-weight span{font-size:18px;font-weight:400;color:var(--text2)}
@@ -201,8 +198,8 @@ select.input{appearance:none}
 .mis-delta-up{color:var(--red);font-size:11px;font-weight:700}
 .mis-delta-dn{color:var(--green);font-size:11px;font-weight:700}
 .mis-delta-0{color:var(--text3);font-size:11px}
-.mis-chart-tabs{display:flex;gap:0;margin:0 16px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
-.mis-chart-tab{flex:1;text-align:center;padding:9px 4px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.mis-chart-tabs{display:flex;margin:0 16px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.mis-chart-tab{flex:1;text-align:center;padding:9px 4px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s;white-space:nowrap}
 .mis-chart-tab.active{background:var(--accent);color:#000}
 .mis-chart-tab:not(.active){background:var(--bg2);color:var(--text2)}
 </style>
@@ -775,7 +772,6 @@ select.input{appearance:none}
       <input type="date" class="input" id="mis-date">
     </div>
     <div class="divider"></div>
-    <div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Corpo</div>
     <div class="flex gap-8 mb-12">
       <div style="flex:1">
         <label class="input-label">Peso (kg)</label>
@@ -785,34 +781,16 @@ select.input{appearance:none}
     <div class="divider"></div>
     <div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Circonferenze (cm)</div>
     <div class="flex gap-8 mb-8">
-      <div style="flex:1">
-        <label class="input-label">Petto</label>
-        <input type="number" class="input" id="mis-chest" placeholder="es. 100" min="0" step="0.5">
-      </div>
-      <div style="flex:1">
-        <label class="input-label">Addome</label>
-        <input type="number" class="input" id="mis-abdomen" placeholder="es. 85" min="0" step="0.5">
-      </div>
+      <div style="flex:1"><label class="input-label">Petto</label><input type="number" class="input" id="mis-chest" placeholder="es. 100" min="0" step="0.5"></div>
+      <div style="flex:1"><label class="input-label">Addome</label><input type="number" class="input" id="mis-abdomen" placeholder="es. 85" min="0" step="0.5"></div>
     </div>
     <div class="flex gap-8 mb-8">
-      <div style="flex:1">
-        <label class="input-label">Bicipite dx</label>
-        <input type="number" class="input" id="mis-right-bicep" placeholder="es. 38" min="0" step="0.5">
-      </div>
-      <div style="flex:1">
-        <label class="input-label">Bicipite sx</label>
-        <input type="number" class="input" id="mis-left-bicep" placeholder="es. 37.5" min="0" step="0.5">
-      </div>
+      <div style="flex:1"><label class="input-label">Bicipite dx</label><input type="number" class="input" id="mis-right-bicep" placeholder="es. 38" min="0" step="0.5"></div>
+      <div style="flex:1"><label class="input-label">Bicipite sx</label><input type="number" class="input" id="mis-left-bicep" placeholder="es. 37.5" min="0" step="0.5"></div>
     </div>
     <div class="flex gap-8 mb-12">
-      <div style="flex:1">
-        <label class="input-label">Quadricipite dx</label>
-        <input type="number" class="input" id="mis-right-quad" placeholder="es. 58" min="0" step="0.5">
-      </div>
-      <div style="flex:1">
-        <label class="input-label">Quadricipite sx</label>
-        <input type="number" class="input" id="mis-left-quad" placeholder="es. 57.5" min="0" step="0.5">
-      </div>
+      <div style="flex:1"><label class="input-label">Quadricipite dx</label><input type="number" class="input" id="mis-right-quad" placeholder="es. 58" min="0" step="0.5"></div>
+      <div style="flex:1"><label class="input-label">Quadricipite sx</label><input type="number" class="input" id="mis-left-quad" placeholder="es. 57.5" min="0" step="0.5"></div>
     </div>
     <div class="divider"></div>
     <div class="flex gap-8">
@@ -930,7 +908,7 @@ const BUILTIN_EXERCISES = [
 // ============================================================
 // STATE
 // ============================================================
-let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], hiddenExercises:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null, misurazioni:[] };
+let state = { templates:[], sessions:[], customExercises:[], deletedBuiltins:[], hiddenExercises:[], builtinOverrides:{}, profile:{name:'Atleta',unit:'kg'}, activeSession:null, misurazioni:[], last_updated:null };
 
 // temp state
 let editingTemplateIdx = null;
@@ -1001,6 +979,10 @@ async function syncToCloud() {
   if (!currentUser) return;
   showSyncIndicator('⏳ Sync...');
   try {
+    var now = new Date().toISOString();
+    // Store last_updated inside the state payload so we can compare it
+    // against the cloud value before overwriting (see loadFromCloud / _onLogin)
+    state.last_updated = now;
     var toSave = {
       templates: state.templates, sessions: state.sessions,
       customExercises: state.customExercises,
@@ -1008,12 +990,15 @@ async function syncToCloud() {
       hiddenExercises: state.hiddenExercises,
       builtinOverrides: state.builtinOverrides,
       profile: state.profile,
-      misurazioni: state.misurazioni
+      misurazioni: state.misurazioni,
+      last_updated: now
     };
+    // Also persist the timestamp locally so we can read it offline
+    _saveToLocal();
     var { error } = await supa.from('user_data').upsert({
       user_id: currentUser.id,
       state: toSave,
-      updated_at: new Date().toISOString()
+      updated_at: now
     }, { onConflict: 'user_id' });
     if (error) throw error;
     syncPending = false;
@@ -1024,30 +1009,39 @@ async function syncToCloud() {
   }
 }
 
+// Fetches cloud state and returns it (with its timestamp) without applying it yet.
+// The caller (_onLogin) decides which source wins based on timestamps.
 async function loadFromCloud() {
-  if (!currentUser) return false;
+  if (!currentUser) return null;
   try {
-    var { data, error } = await supabase
+    var { data, error } = await supa
       .from('user_data')
-      .select('state')
+      .select('state, updated_at')
       .eq('user_id', currentUser.id)
       .single();
-    if (error || !data) return false;
-    var p = data.state;
-    state.templates = p.templates || [];
-    state.sessions = p.sessions || [];
-    state.customExercises = p.customExercises || [];
-    state.deletedBuiltins = p.deletedBuiltins || [];
-    state.hiddenExercises = p.hiddenExercises || [];
-    state.builtinOverrides = p.builtinOverrides || {};
-    state.profile = p.profile || {name:'Atleta',unit:'kg'};
-    state.misurazioni = p.misurazioni || [];
-    // Also update localStorage as fallback
-    _saveToLocal();
-    return true;
+    if (error || !data) return null;
+    return {
+      state: data.state,
+      // Prefer the timestamp stored inside the payload (more accurate);
+      // fall back to the updated_at column
+      last_updated: (data.state && data.state.last_updated) || data.updated_at || null
+    };
   } catch(e) {
-    return false;
+    return null;
   }
+}
+
+// Applies a state object (from cloud or local) into the running state
+function _applyState(p) {
+  state.templates       = p.templates       || [];
+  state.sessions        = p.sessions        || [];
+  state.customExercises = p.customExercises || [];
+  state.deletedBuiltins = p.deletedBuiltins || [];
+  state.hiddenExercises = p.hiddenExercises || [];
+  state.builtinOverrides= p.builtinOverrides|| {};
+  state.profile         = p.profile         || {name:'Atleta',unit:'kg'};
+  state.misurazioni     = p.misurazioni     || [];
+  state.last_updated    = p.last_updated    || null;
 }
 
 // Auth functions
@@ -1116,14 +1110,11 @@ function _subscribeRealtime() {
       if (!p) return;
       // Don't overwrite if we are the ones who just saved (debounce guard)
       if (_syncDebounceTimer) return;
-      state.templates = p.templates || [];
-      state.sessions = p.sessions || [];
-      state.customExercises = p.customExercises || [];
-      state.deletedBuiltins = p.deletedBuiltins || [];
-      state.hiddenExercises = p.hiddenExercises || [];
-      state.builtinOverrides = p.builtinOverrides || {};
-      state.profile = p.profile || {name:'Atleta',unit:'kg'};
-      state.misurazioni = p.misurazioni || [];
+      // Only apply if the incoming change is newer than what we have locally
+      var incomingTs = new Date(p.last_updated || 0).getTime();
+      var currentTs  = new Date(state.last_updated || 0).getTime();
+      if (incomingTs < currentTs) return; // our local data is newer — ignore
+      _applyState(p);
       _saveToLocal();
       // Refresh current visible page
       var activePage = document.querySelector('.page.active');
@@ -1142,18 +1133,57 @@ function _subscribeRealtime() {
 async function _onLogin(user) {
   currentUser = user;
   _authSetLoading(false);
-  // Try loading from cloud, fallback to localStorage
-  var loaded = await loadFromCloud();
-  if (!loaded) { loadStateLocal(); }
-  // Restore active session from localStorage regardless
+
+  // Read both sources BEFORE applying either one
+  var cloudResult = await loadFromCloud();  // {state, last_updated} or null
+  var localRaw    = null;
+  var localParsed = null;
+  try {
+    localRaw    = localStorage.getItem('ironlog_v3');
+    localParsed = localRaw ? JSON.parse(localRaw) : null;
+  } catch(e) {}
+
+  var cloudTs = cloudResult  ? new Date(cloudResult.last_updated  || 0).getTime() : 0;
+  var localTs = localParsed  ? new Date(localParsed.last_updated  || 0).getTime() : 0;
+
+  var hasCloud = cloudResult && cloudResult.state &&
+    ((cloudResult.state.sessions  || []).length ||
+     (cloudResult.state.templates || []).length);
+  var hasLocal = localParsed &&
+    ((localParsed.sessions  || []).length ||
+     (localParsed.templates || []).length);
+
+  if (hasCloud && hasLocal) {
+    if (localTs > cloudTs) {
+      // Local is NEWER — use it and push it up to fix the cloud
+      _applyState(localParsed);
+      showSyncIndicator('📱 Dati locali più recenti — upload in corso...');
+      await syncToCloud();
+    } else if (cloudTs > localTs) {
+      // Cloud is NEWER — use it and update local cache
+      _applyState(cloudResult.state);
+      _saveToLocal();
+      showSyncIndicator('☁️ Dati cloud aggiornati');
+    } else {
+      // Same timestamp (or both zero) — trust cloud as canonical
+      _applyState(cloudResult.state);
+      _saveToLocal();
+    }
+  } else if (hasCloud) {
+    // Only cloud has data
+    _applyState(cloudResult.state);
+    _saveToLocal();
+  } else if (hasLocal) {
+    // Only local has data — push it up
+    _applyState(localParsed);
+    await syncToCloud();
+  }
+  // else: neither has data — fresh start, nothing to do
+
+  // Restore any in-progress session from localStorage regardless
   _restoreActiveSession();
   document.getElementById('auth-overlay').style.display = 'none';
   _initApp();
-  // If we had pending local data and no cloud data, push it up
-  if (!loaded && (state.sessions.length || state.templates.length)) {
-    await syncToCloud();
-  }
-  // Start listening for changes from other devices
   _subscribeRealtime();
 }
 
@@ -1182,7 +1212,8 @@ function _saveToLocal() {
       hiddenExercises:state.hiddenExercises,
       builtinOverrides:state.builtinOverrides,
       profile:state.profile,
-      misurazioni:state.misurazioni
+      misurazioni:state.misurazioni,
+      last_updated:state.last_updated || new Date().toISOString()
     };
     if (state.activeSession) {
       var sessionCopy = JSON.parse(JSON.stringify(state.activeSession));
@@ -1202,14 +1233,7 @@ function loadStateLocal() {
     var s = localStorage.getItem('ironlog_v3');
     if (s) {
       var p = JSON.parse(s);
-      state.templates = p.templates || [];
-      state.sessions = p.sessions || [];
-      state.customExercises = p.customExercises || [];
-      state.deletedBuiltins = p.deletedBuiltins || [];
-      state.hiddenExercises = p.hiddenExercises || [];
-      state.builtinOverrides = p.builtinOverrides || {};
-      state.profile = p.profile || {name:'Atleta',unit:'kg'};
-      state.misurazioni = p.misurazioni || [];
+      _applyState(p);
     }
   } catch(e) {}
 }
@@ -1242,9 +1266,11 @@ function loadState() {
   _restoreActiveSession();
 }
 
-// saveState: save locally always + sync to cloud
+// saveState: stamp timestamp, save locally, then debounce cloud sync
 var _syncDebounceTimer = null;
 function saveState() {
+  // Always stamp the time of the last local change so _onLogin can compare
+  state.last_updated = new Date().toISOString();
   _saveToLocal();
   // Debounce cloud sync by 2s to avoid hammering on rapid changes
   clearTimeout(_syncDebounceTimer);
@@ -1921,69 +1947,45 @@ function renderAllenamento() {
   }
 }
 
-// Returns {sets, reps, weight} from the most recent session for exId
-// filtered by templateIdx when provided — so each template gets its own progression history
-function getLastSessionDataForExercise(exId, templateIdx) {
-  // First pass: look for sessions from the same template
-  if (templateIdx !== null && templateIdx !== undefined) {
-    for (var i = state.sessions.length - 1; i >= 0; i--) {
-      var s = state.sessions[i];
-      if (s.templateIdx !== templateIdx) continue;
-      var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
-      if (e && e.sets && e.sets.length) {
-        var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
-        var setsToUse = workSets.length ? workSets : e.sets;
-        var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
-        var lastSet = setsToUse[setsToUse.length-1];
-        var rest = (e.config && e.config.rest) ? e.config.rest : 120;
-        return {
-          sets: setsToUse.length,
-          reps: lastSet.reps || 10,
-          weight: maxW,
-          rest: rest
-          // NOTE: increments are NOT read from history — they always come from the template cfg
-        };
-      }
-    }
-    // No session found for this template → return null so the template cfg values are used as-is
-    return null;
-  }
-  // Fallback (blank session / no templateIdx): look across all sessions
-  for (var j = state.sessions.length - 1; j >= 0; j--) {
-    var sj = state.sessions[j];
-    var ej = (sj.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
-    if (ej && ej.sets && ej.sets.length) {
-      var wj = ej.sets.filter(function(st){ return st.type !== 'warmup'; });
-      var sj2 = wj.length ? wj : ej.sets;
-      var mj = Math.max.apply(null, sj2.map(function(st){ return st.weight||0; }));
-      var lj = sj2[sj2.length-1];
-      return { sets: sj2.length, reps: lj.reps || 10, weight: mj, rest: 120 };
+// Returns {sets, reps, weight, increments} from the most recent session containing exId
+function getLastSessionDataForExercise(exId) {
+  for (var i = state.sessions.length - 1; i >= 0; i--) {
+    var s = state.sessions[i];
+    var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
+    if (e && e.sets && e.sets.length) {
+      var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
+      var setsToUse = workSets.length ? workSets : e.sets;
+      var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
+      var lastSet = setsToUse[setsToUse.length-1];
+      var rest = (e.config && e.config.rest) ? e.config.rest : 120;
+      return {
+        sets: setsToUse.length,
+        reps: lastSet.reps || 10,
+        weight: maxW,
+        rest: rest,
+        increments: e.increments || {weight:0,sets:0,reps:0}
+      };
     }
   }
   return null;
 }
 
-function buildSessionExercise(cfg, templateIdx) {
+function buildSessionExercise(cfg) {
   var ex = findExercise(cfg.exerciseId);
-  // Look for the last session from THIS same template only
-  var last = getLastSessionDataForExercise(cfg.exerciseId, templateIdx);
+  var last = getLastSessionDataForExercise(cfg.exerciseId);
   var effectiveCfg = Object.assign({}, cfg);
-
   if (last) {
-    // Weight and reps come from actual last performance in this template's history
-    // Increments always come from the template cfg — never from history — so they
-    // stay isolated per-template even when the same exercise appears in multiple templates
-    var inc = cfg.increments || {weight:0, sets:0, reps:0};
+    var inc = last.increments || {weight:0,sets:0,reps:0};
     effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
-    effectiveCfg.reps   = Math.max(1, last.reps + (inc.reps||0));
-    // sets and rest always from template cfg
+    effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
+    // sets ALWAYS comes from the template config — never overwritten by history
     effectiveCfg.sets   = cfg.sets;
+    // rest always comes from the template cfg, NOT from history (history doesn't store it reliably)
     effectiveCfg.rest   = cfg.rest || 120;
   }
-  // Start each session with zero progression delta — user adjusts during the workout
+  // Progression and RPE are zeroed — user sets them fresh during this session
   effectiveCfg.increments = {weight:0, sets:0, reps:0};
   effectiveCfg.rpe = '';
-
   var sets = [];
   var wuCount = effectiveCfg.warmup || 0;
   var wuPcts = wuCount === 1 ? [0.75] : wuCount === 2 ? [0.50, 0.75] : wuCount === 3 ? [0.25, 0.50, 0.75] : [];
@@ -1997,7 +1999,7 @@ function buildSessionExercise(cfg, templateIdx) {
 
 function startSessionFromTemplate(idx) {
   var t = state.templates[idx];
-  state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(function(cfg){ return buildSessionExercise(cfg, idx); })};
+  state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(buildSessionExercise)};
   startSessionTimer();
   showPage('allenamento');
 }
@@ -2351,31 +2353,23 @@ function confirmFinishSession() {
     return;
   }
 
-  // Apply actual performed values + in-session progression delta to THIS template only.
-  // The "increments" stored in the template cfg are the user's STANDING setting (e.g. +2.5kg
-  // every session). The "in-session delta" (sexe.config.increments) is what the user chose
-  // during this specific workout via the Progressione panel. We apply the in-session delta
-  // to the template's base values, then restore the standing increment so it is ready for
-  // the next session. This way two templates that share the same exercise never interfere.
+  // Apply actual performed values + increments to template
   if (state.activeSession.templateIdx !== null) {
     var tpl = state.templates[state.activeSession.templateIdx];
     if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
       var cfg = tpl.exercises[i]; if (!cfg) return;
-      // In-session delta chosen by the user during this workout
-      var sessionDelta = sexe.config.increments || {weight:0, sets:0, reps:0};
+      var inc = sexe.config.increments || {weight:0,sets:0,reps:0};
+      // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
       var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
       if (workSets.length) {
         var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
         var lastSet = workSets[workSets.length-1];
-        // Write back: actual performed weight/reps/sets + the in-session delta the user set
-        cfg.weight = Math.max(0, Math.round((maxW + (sessionDelta.weight||0)) * 10) / 10);
-        cfg.reps   = Math.max(1, lastSet.reps + (sessionDelta.reps||0));
-        cfg.sets   = Math.max(1, workSets.length + (sessionDelta.sets||0));
-        // Keep the standing increment (cfg.increments) exactly as the user configured it
-        // in the template — do NOT overwrite it with the in-session delta.
-        // The in-session delta is already applied above to weight/reps/sets.
+        cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
+        cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
+        cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
+        cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
       }
-      // If no sets completed for this exercise: leave cfg untouched
+      // Se nessuna serie completata: non toccare cfg, non applicare progressione
     });
   }
   state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx});
@@ -3015,13 +3009,13 @@ function _initApp() {
 // MISURAZIONI
 // ============================================================
 var MIS_FIELDS = [
-  {key:'weight',     label:'Peso',          unit:'kg'},
-  {key:'chest',      label:'Petto',          unit:'cm'},
-  {key:'abdomen',    label:'Addome',         unit:'cm'},
-  {key:'rightBicep', label:'Bicipite dx',    unit:'cm'},
-  {key:'leftBicep',  label:'Bicipite sx',    unit:'cm'},
-  {key:'rightQuad',  label:'Quadricipite dx',unit:'cm'},
-  {key:'leftQuad',   label:'Quadricipite sx',unit:'cm'},
+  {key:'weight',     label:'Peso',           unit:'kg'},
+  {key:'chest',      label:'Petto',           unit:'cm'},
+  {key:'abdomen',    label:'Addome',          unit:'cm'},
+  {key:'rightBicep', label:'Bicipite dx',     unit:'cm'},
+  {key:'leftBicep',  label:'Bicipite sx',     unit:'cm'},
+  {key:'rightQuad',  label:'Quadricipite dx', unit:'cm'},
+  {key:'leftQuad',   label:'Quadricipite sx', unit:'cm'},
 ];
 var misChartField = 'weight';
 var misChartInstance = null;
@@ -3030,18 +3024,13 @@ function openAddMisurazione() {
   document.getElementById('mis-modal-title').textContent = 'Nuova misurazione';
   document.getElementById('mis-editing-id').value = '';
   var today = new Date();
-  var yyyy = today.getFullYear();
-  var mm = String(today.getMonth()+1).padStart(2,'0');
-  var dd = String(today.getDate()).padStart(2,'0');
-  document.getElementById('mis-date').value = yyyy+'-'+mm+'-'+dd;
-  ['mis-weight','mis-chest','mis-abdomen','mis-right-bicep','mis-left-bicep','mis-right-quad','mis-left-quad'].forEach(function(id){
-    document.getElementById(id).value = '';
-  });
+  document.getElementById('mis-date').value = today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
+  ['mis-weight','mis-chest','mis-abdomen','mis-right-bicep','mis-left-bicep','mis-right-quad','mis-left-quad'].forEach(function(id){ document.getElementById(id).value=''; });
   openModal('modal-misurazione');
 }
 
 function openEditMisurazione(id) {
-  var m = state.misurazioni.find(function(x){ return x.id === id; });
+  var m = state.misurazioni.find(function(x){ return x.id===id; });
   if (!m) return;
   document.getElementById('mis-modal-title').textContent = 'Modifica misurazione';
   document.getElementById('mis-editing-id').value = id;
@@ -3059,11 +3048,11 @@ function openEditMisurazione(id) {
 function saveMisurazione() {
   var dateVal = document.getElementById('mis-date').value;
   if (!dateVal) { showToast('Inserisci una data'); return; }
-  function fv(id) { var v = parseFloat(document.getElementById(id).value); return isNaN(v) ? null : v; }
+  function fv(id){ var v=parseFloat(document.getElementById(id).value); return isNaN(v)?null:v; }
   var editingId = document.getElementById('mis-editing-id').value;
   var record = {
-    id:         editingId || ('mis_'+Date.now()),
-    date:       dateVal,
+    id: editingId || ('mis_'+Date.now()),
+    date: dateVal,
     weight:     fv('mis-weight'),
     chest:      fv('mis-chest'),
     abdomen:    fv('mis-abdomen'),
@@ -3073,8 +3062,8 @@ function saveMisurazione() {
     leftQuad:   fv('mis-left-quad'),
   };
   if (editingId) {
-    var idx = state.misurazioni.findIndex(function(x){ return x.id === editingId; });
-    if (idx !== -1) state.misurazioni[idx] = record;
+    var idx = state.misurazioni.findIndex(function(x){ return x.id===editingId; });
+    if (idx!==-1) state.misurazioni[idx]=record;
   } else {
     state.misurazioni.push(record);
   }
@@ -3082,12 +3071,12 @@ function saveMisurazione() {
   saveState();
   closeModal('modal-misurazione');
   renderMisurazioni();
-  showToast('Misurazione salvata ✓');
+  showToast('Misurazione salvata');
 }
 
 function deleteMisurazione(id) {
   if (!confirm('Eliminare questa misurazione?')) return;
-  state.misurazioni = state.misurazioni.filter(function(x){ return x.id !== id; });
+  state.misurazioni = state.misurazioni.filter(function(x){ return x.id!==id; });
   saveState();
   renderMisurazioni();
   showToast('Misurazione eliminata');
@@ -3101,70 +3090,42 @@ function switchMisChart(field, el) {
 }
 
 function renderMisChart() {
-  var fieldMeta = MIS_FIELDS.find(function(f){ return f.key === misChartField; }) || MIS_FIELDS[0];
-  document.getElementById('mis-chart-title').textContent = fieldMeta.label + ' nel tempo (' + fieldMeta.unit + ')';
+  var meta = MIS_FIELDS.find(function(f){ return f.key===misChartField; }) || MIS_FIELDS[0];
+  document.getElementById('mis-chart-title').textContent = meta.label+' nel tempo ('+meta.unit+')';
   var sorted = state.misurazioni.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
-  var labels = [], data = [];
+  var labels=[], data=[];
   sorted.forEach(function(m){
-    if (m[misChartField] != null) {
-      labels.push(new Date(m.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'}));
-      data.push(m[misChartField]);
-    }
+    if (m[misChartField]!=null){ labels.push(new Date(m.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'})); data.push(m[misChartField]); }
   });
-  if (misChartInstance) { misChartInstance.destroy(); misChartInstance = null; }
-  var ctx = document.getElementById('chart-misurazioni').getContext('2d');
-  misChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        data: data,
-        borderColor: '#e8ff47',
-        backgroundColor: 'rgba(232,255,71,0.08)',
-        borderWidth: 2, fill: true, tension: 0.35,
-        pointBackgroundColor: '#e8ff47',
-        pointRadius: labels.length < 20 ? 4 : 2,
-        pointHoverRadius: 6,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: {
-        label: function(ctx) { return ctx.parsed.y + ' ' + fieldMeta.unit; }
-      }}},
-      scales: {
-        x: { grid:{color:'rgba(255,255,255,0.05)'}, ticks:{color:'#666',font:{size:10}} },
-        y: { grid:{color:'rgba(255,255,255,0.05)'}, ticks:{color:'#666',font:{size:10}} }
-      }
-    }
+  if (misChartInstance){ misChartInstance.destroy(); misChartInstance=null; }
+  misChartInstance = new Chart(document.getElementById('chart-misurazioni').getContext('2d'),{
+    type:'line',
+    data:{labels:labels,datasets:[{data:data,borderColor:'#e8ff47',backgroundColor:'rgba(232,255,71,0.08)',borderWidth:2,fill:true,tension:0.35,pointBackgroundColor:'#e8ff47',pointRadius:labels.length<20?4:2,pointHoverRadius:6}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return c.parsed.y+' '+meta.unit;}}}},
+      scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
   });
 }
 
 function renderMisList() {
-  if (!state.misurazioni.length) {
-    document.getElementById('mis-list').innerHTML =
-      '<div class="empty-state"><div class="empty-icon">📏</div>'+
-      '<div class="empty-title">Nessuna misurazione</div>'+
-      '<div class="empty-desc">Aggiungi la prima misurazione per tracciare i progressi del tuo corpo</div></div>';
+  if (!state.misurazioni.length){
+    document.getElementById('mis-list').innerHTML='<div class="empty-state"><div class="empty-icon">📏</div><div class="empty-title">Nessuna misurazione</div><div class="empty-desc">Aggiungi la prima misurazione per tracciare i progressi</div></div>';
     return;
   }
-  var sorted = state.misurazioni; // already desc by date
-  var html = sorted.map(function(m, i) {
-    var prev = sorted[i+1] || null;
+  var sorted = state.misurazioni;
+  document.getElementById('mis-list').innerHTML = sorted.map(function(m,i){
+    var prev = sorted[i+1]||null;
     var dateStr = new Date(m.date).toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'long',year:'numeric'});
-    function deltaHtml(field) {
-      if (m[field] == null || !prev || prev[field] == null) return '';
-      var diff = Math.round((m[field] - prev[field]) * 10) / 10;
-      if (diff === 0) return ' <span class="mis-delta-0">±0</span>';
-      var bad = (field === 'weight' || field === 'abdomen') ? diff > 0 : diff < 0;
+    function deltaHtml(field){
+      if (m[field]==null||!prev||prev[field]==null) return '';
+      var diff=Math.round((m[field]-prev[field])*10)/10;
+      if (diff===0) return ' <span class="mis-delta-0">±0</span>';
+      var bad=(field==='weight'||field==='abdomen')?diff>0:diff<0;
       return ' <span class="'+(bad?'mis-delta-up':'mis-delta-dn')+'">'+(diff>0?'+':'')+diff+'</span>';
     }
-    function fieldBlock(field, label) {
-      if (m[field] == null) return '';
-      var meta = MIS_FIELDS.find(function(f){ return f.key===field; });
-      return '<div class="mis-field">'+
-        '<div class="mis-field-val">'+m[field]+' <span style="font-size:11px;color:var(--text2);font-weight:400">'+meta.unit+'</span>'+deltaHtml(field)+'</div>'+
-        '<div class="mis-field-lbl">'+label+'</div></div>';
+    function fieldBlock(field,label){
+      if (m[field]==null) return '';
+      var u=MIS_FIELDS.find(function(f){return f.key===field;}).unit;
+      return '<div class="mis-field"><div class="mis-field-val">'+m[field]+' <span style="font-size:11px;color:var(--text2);font-weight:400">'+u+'</span>'+deltaHtml(field)+'</div><div class="mis-field-lbl">'+label+'</div></div>';
     }
     return '<div class="mis-card">'+
       '<div class="flex justify-between items-center" style="margin-bottom:6px">'+
@@ -3172,25 +3133,17 @@ function renderMisList() {
         '<div class="flex gap-8">'+
           '<button class="btn btn-xs btn-secondary" onclick="openEditMisurazione(\''+m.id+'\')">Modifica</button>'+
           '<button class="btn btn-xs btn-danger" onclick="deleteMisurazione(\''+m.id+'\')">Elimina</button>'+
-        '</div>'+
-      '</div>'+
-      (m.weight != null ? '<div class="mis-weight">'+m.weight+'<span> kg'+deltaHtml('weight')+'</span></div>' : '')+
+        '</div></div>'+
+      (m.weight!=null?'<div class="mis-weight">'+m.weight+'<span> kg'+deltaHtml('weight')+'</span></div>':'')+
       '<div class="mis-grid">'+
-        fieldBlock('chest','Petto')+
-        fieldBlock('abdomen','Addome')+
-        fieldBlock('rightBicep','Bicipite dx')+
-        fieldBlock('leftBicep','Bicipite sx')+
-        fieldBlock('rightQuad','Quad dx')+
-        fieldBlock('leftQuad','Quad sx')+
+        fieldBlock('chest','Petto')+fieldBlock('abdomen','Addome')+
+        fieldBlock('rightBicep','Bicipite dx')+fieldBlock('leftBicep','Bicipite sx')+
+        fieldBlock('rightQuad','Quad dx')+fieldBlock('leftQuad','Quad sx')+
       '</div></div>';
   }).join('');
-  document.getElementById('mis-list').innerHTML = html;
 }
 
-function renderMisurazioni() {
-  renderMisChart();
-  renderMisList();
-}
+function renderMisurazioni(){ renderMisChart(); renderMisList(); }
 
 // ============================================================
 // LOCK LAYOUT HEIGHT — prevents iOS Chrome/Safari keyboard from resizing the app
