@@ -219,6 +219,7 @@ select.input{appearance:none}
     <div class="section-link" onclick="showPage('template')">Vedi tutti</div>
   </div>
   <div id="home-templates"></div>
+  <div id="progression-advisor" style="display:none"></div>
   <div class="section-header">
     <div class="section-title">Ultima sessione</div>
     <div class="section-link" onclick="showPage('storico')">Storico</div>
@@ -347,15 +348,16 @@ select.input{appearance:none}
     <button class="btn btn-primary btn-full" onclick="openAddMisurazione()">+ Nuova misurazione</button>
   </div>
   <div class="mis-chart-tabs" id="mis-chart-tabs">
-    <div class="mis-chart-tab active" data-field="weight" onclick="switchMisChart('weight',this)">Peso</div>
-    <div class="mis-chart-tab" data-field="chest" onclick="switchMisChart('chest',this)">Petto</div>
-    <div class="mis-chart-tab" data-field="abdomen" onclick="switchMisChart('abdomen',this)">Addome</div>
-    <div class="mis-chart-tab" data-field="rightBicep" onclick="switchMisChart('rightBicep',this)">Bicipite</div>
-    <div class="mis-chart-tab" data-field="rightQuad" onclick="switchMisChart('rightQuad',this)">Quad</div>
+    <div class="mis-chart-tab active" data-group="weight" onclick="switchMisChart('weight',this)">Peso</div>
+    <div class="mis-chart-tab" data-group="chest" onclick="switchMisChart('chest',this)">Petto</div>
+    <div class="mis-chart-tab" data-group="abdomen" onclick="switchMisChart('abdomen',this)">Addome</div>
+    <div class="mis-chart-tab" data-group="bicep" onclick="switchMisChart('bicep',this)">Bicipite</div>
+    <div class="mis-chart-tab" data-group="quad" onclick="switchMisChart('quad',this)">Quad</div>
   </div>
   <div class="card" style="margin-top:0">
     <div class="card-title" id="mis-chart-title">Peso nel tempo (kg)</div>
     <div class="chart-container"><canvas id="chart-misurazioni"></canvas></div>
+    <div id="mis-chart-legend" style="display:none;padding:0 16px 12px;gap:14px;flex-wrap:wrap" class="flex items-center"></div>
   </div>
   <div class="section-header"><div class="section-title">Storico</div></div>
   <div id="mis-list"></div>
@@ -918,6 +920,298 @@ function buildRepSelector(inputId, reps, exId, onchangeExpr) {
     '<div style="font-size:15px;font-weight:700;min-width:26px;text-align:center">'+snapped+'</div>'+
     '<button type="button" class="rep-step-btn" '+(isMax?'disabled':'')+' style="width:26px;height:30px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:'+(isMax?'var(--text3)':'var(--text)')+';font-size:15px;font-weight:700;cursor:'+(isMax?'default':'pointer')+';font-family:inherit;line-height:1" onclick="'+onchangeExpr.replace('DIR', 1)+'">+</button>'+
   '</div>';
+}
+
+// ============================================================
+// PROGRESSIONE & DELOAD AUTOMATICO
+// ============================================================
+// Rilegge lo storico, capisce se un esercizio ha "chiuso" la progressione
+// (raggiunge il tetto di ripetizioni con tecnica solida) e propone il passo
+// successivo: piu' peso / meno rip, oppure una settimana di scarico.
+var DELOAD_LOAD_PCT   = 0.7;   // -30% sul carico
+var DELOAD_SETS_PCT  = 0.5;   // -50% sulle serie
+var DELOAD_REST_PCT  = 1.25;  // +25% di recupero
+var DELOAD_RPE       = 9;     // RPE medio oltre il quale segnala fatica
+var DELOAD_STALL     = 3;     // sessioni ferme a tetto senza avanzamento
+var DELOAD_ABANDON_DAYS = 60; // oltre questo lasso l'esercizio e' abbandonato: silenzio
+var PROG_STALL_DAYS  = 14;    // giorni fermi prima di segnalare che manca la progressione
+
+// Una riga di log per sessione in cui l'esercizio e' stato eseguito.
+// oldest -> newest
+function exerciseLog(exId) {
+  var out = [];
+  (state.sessions||[]).forEach(function(s){
+    var entry = null;
+    (s.exercises||[]).forEach(function(e){ if (e.exerciseId===exId) entry = e; });
+    if (!entry || !(entry.sets||[]).length) return;
+    var best = null, rpes = [], anyRep = false;
+    entry.sets.forEach(function(st){
+      if (st.reps>0) anyRep = true;
+      if (st.reps>0 && (!best || st.reps>best.reps || (st.reps===best.reps && (st.weight||0)>best.weight))) {
+        best = {reps:st.reps, weight:st.weight||0, rpe:parseFloat(st.rpe)||null};
+      }
+      if (st.rpe!=null && st.rpe!=='') rpes.push(parseFloat(st.rpe));
+    });
+    if (!anyRep) return; // solo isometrici/cardio: niente progressione rip
+    out.push({
+      date:s.date,
+      reps: best ? best.reps : 0,
+      weight: best ? best.weight : 0,
+      rpe: best ? best.rpe : null,
+      avgRpe: rpes.length ? Math.round(rpes.reduce(function(a,b){return a+b;},0)/rpes.length*10)/10 : null,
+      sets: entry.sets.length
+    });
+  });
+  out.sort(function(a,b){ return a.date.localeCompare(b.date); });
+  return out;
+}
+
+function roundTo(v, step) { return Math.round(v/step)*step; }
+function round1(v) { return Math.round(v*10)/10; }
+
+// Analizza un esercizio: tetto raggiunto? carico salito? tecnica pulita?
+function analyzeExerciseProgress(exId) {
+  var ex = findExercise(exId);
+  if (!ex) return null;
+  var ladder = getRepProgression(exId);
+  var minReps = ladder[0], maxReps = ladder[ladder.length-1];
+  var log = exerciseLog(exId);
+  if (!log.length) return null;
+
+  var loaded = log.some(function(r){ return r.weight>0; });
+  var last = log[log.length-1];
+  var prev = log.length>1 ? log[log.length-2] : null;
+  var lastDate = new Date(last.date).getTime();
+
+  // Sessioni "a tetto": tutte le serie a rep >= maxReps
+  var atCeilingLog = log.filter(function(r){ return r.reps>=maxReps; });
+  var firstCeil = atCeilingLog.length ? atCeilingLog[0] : null;
+
+  // Quante sessioni consecutive (dalla piu' recente) sono ferme a tetto
+  // con lo stesso carico e senza aumentare le ripetizioni
+  var streak = 0;
+  for (var i=log.length-1; i>=0; i--) {
+    if (log[i].reps>=maxReps && log[i].weight===last.weight) streak++;
+    else break;
+  }
+
+  // Carico salito rispetto alla prima volta che il tetto e' stato toccato?
+  var loadSteppedUp = !!(firstCeil && loaded && last.weight>firstCeil.weight);
+  var repsGrew = !!(prev && last.reps>prev.reps);
+  var daysSince = Math.round((Date.now()-lastDate)/86400000);
+  var avgRpeCeil = (function(){
+    var v = atCeilingLog.map(function(r){return r.avgRpe;}).filter(function(x){return x!=null;});
+    if (!v.length) return null;
+    return Math.round(v.reduce(function(a,b){return a+b;},0)/v.length*10)/10;
+  })();
+
+  var r = {
+    exerciseId: exId,
+    name: ex.name,
+    icon: ex.icon,
+    category: ex.category,
+    type: getExerciseType(exId),
+    ladder: ladder,
+    minReps: minReps,
+    maxReps: maxReps,
+    fixed: ladder.length===1,
+    log: log,
+    sessions: log.length,
+    loaded: loaded,
+    last: last,
+    daysSince: daysSince,
+    atCeiling: last.reps>=maxReps,
+    loadSteppedUp: loadSteppedUp,
+    repsGrew: repsGrew,
+    streak: streak,
+    avgRpeCeil: avgRpeCeil
+  };
+
+  r.action = decideProgressionAction(r);
+  return r;
+}
+
+// 'progress' | 'deload' | null
+function decideProgressionAction(r) {
+  if (r.daysSince >= DELOAD_ABANDON_DAYS) return null;      // scheda abbandonata: niente rumore
+  var stale = r.daysSince >= PROG_STALL_DAYS;               // fermo da due settimane o piu'
+  if (r.fixed){
+    // Progressione fissa (es. Broad jump 3x3): contano solo carico e qualita'
+    return stale && r.sessions>=2 ? 'progress' : null;
+  }
+  if (!r.atCeiling) {
+    // Non ancora a tetto: segnala solo se e' fermo da troppo tempo
+    return stale && r.sessions>=2 ? 'progress' : null;
+  }
+  // A tetto ripetizioni: ora si decide deload vs incremento
+  var hard = r.avgRpeCeil!=null && r.avgRpeCeil>=DELOAD_RPE;
+  if (hard || r.streak>=DELOAD_STALL || (r.loaded && !r.loadSteppedUp && r.streak>=2)) return 'deload';
+  return 'progress';
+}
+
+// Config dell'esercizio dentro un template (o null se non e' in nessuna scheda)
+function findTemplateExercise(exId) {
+  for (var i=0;i<state.templates.length;i++) {
+    var list = state.templates[i].exercises||[];
+    for (var j=0;j<list.length;j++) {
+      if (list[j].exerciseId===exId) return {templateIdx:i, exIdx:j, cfg:list[j], template:state.templates[i]};
+    }
+  }
+  return null;
+}
+
+// Dove trovare i valori attuali: template se presente, altrimenti ultima sessione
+function currentPrescription(exId) {
+  var found = findTemplateExercise(exId);
+  if (found) return {found:found, cfg:found.cfg, weight:found.cfg.weight||0, sets:found.cfg.sets||0, reps:found.cfg.reps||0, rest:found.cfg.rest||0};
+  var log = exerciseLog(exId);
+  var last = log.length ? log[log.length-1] : null;
+  return {found:null, cfg:null, weight:last?last.weight:0, sets:last?last.sets:0, reps:last?last.reps:0, rest:0};
+}
+
+// Passo di progressione: +carico, si riparte dal minimo della progressione
+function progressionPrescription(exId) {
+  var p = currentPrescription(exId);
+  var ladder = getRepProgression(exId);
+  var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
+  var manualInc = p.cfg && p.cfg.increments && p.cfg.increments.weight ? p.cfg.increments.weight : 0;
+  var autoInc = p.weight>=100 ? 5 : (p.weight>=50 ? 2.5 : 1.25);
+  var step = manualInc>0 ? manualInc : autoInc;
+  return {
+    weight: loaded ? round1(p.weight+step) : 0,
+    sets: p.sets || 3,
+    reps: ladder[0],
+    rest: p.rest,
+    step: step,
+    loaded: loaded,
+    loadLabel: loaded ? '+'+step+'kg' : '+'+ladder[0]+' rip'
+  };
+}
+
+// Deload: -30% carico, -50% serie, rep verso la meta' della progressione
+function deloadPrescription(exId) {
+  var p = currentPrescription(exId);
+  var ladder = getRepProgression(exId);
+  var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
+  var midRep = ladder[Math.floor((ladder.length-1)/2)];
+  var sets = Math.max(1, Math.round((p.sets||3)*DELOAD_SETS_PCT));
+  var rest = p.rest ? Math.round(p.rest*DELOAD_REST_PCT) : 0;
+  return {
+    weight: loaded ? round1(p.weight*DELOAD_LOAD_PCT) : 0,
+    sets: sets,
+    reps: midRep,
+    rest: rest,
+    loaded: loaded,
+    loadLabel: loaded ? '-'+Math.round((1-DELOAD_LOAD_PCT)*100)+'% carico' : 'a corpo libero'
+  };
+}
+
+// Applica il consiglio al template che contiene l'esercizio
+function applyProgressionAdvice(exId, action) {
+  var r = analyzeExerciseProgress(exId);
+  if (!r) return;
+  var p = currentPrescription(exId);
+  if (!p.found) { showToast('Aggiungi prima l\'esercizio a un template'); return; }
+
+  var isDeload = (action==='deload');
+  var presc = isDeload ? deloadPrescription(exId) : progressionPrescription(exId);
+  var cfg = p.found.cfg;
+
+  cfg.sets = presc.sets;
+  if (cfg.reps !== undefined) cfg.reps = presc.reps;
+  if (cfgAllowsWeight(cfg) && cfg.weight !== undefined) cfg.weight = presc.weight;
+  if (presc.rest && cfg.rest !== undefined) cfg.rest = presc.rest;
+
+  if (isDeload) {
+    cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'x'+presc.reps+'. Tieni RPE 6-7, poi torna al carico pieno.';
+    showToast('Deload applicato a '+r.name);
+  } else {
+    cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+presc.reps+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
+    showToast('Progressione aggiornata: '+r.name+' '+presc.loadLabel);
+  }
+  saveState();
+  renderTemplates();
+  renderHome();
+  renderProgressionAdvisor();
+}
+
+// Elenco dei consigli, deload prima
+function getProgressionAdvice() {
+  var ids = {};
+  (state.sessions||[]).forEach(function(s){
+    (s.exercises||[]).forEach(function(e){ if (e.exerciseId) ids[e.exerciseId]=true; });
+  });
+  var out = [];
+  Object.keys(ids).forEach(function(id){
+    var r = analyzeExerciseProgress(id);
+    if (r && r.action) out.push(r);
+  });
+  out.sort(function(a,b){
+    if (a.action!==b.action) return a.action==='deload' ? -1 : 1;
+    return b.daysSince - a.daysSince;
+  });
+  return out;
+}
+
+function deloadSessionHint() {
+  // Segnale di scarico globale: troppe sessioni ravvicinate con RPE alto
+  var last14 = (state.sessions||[]).filter(function(s){
+    return (Date.now()-new Date(s.date).getTime())<14*86400000;
+  });
+  if (last14.length<5) return null;
+  var hard = last14.reduce(function(a,s){
+    return a + (s.exercises||[]).reduce(function(b,e){
+      return b + (e.sets||[]).filter(function(st){ return parseFloat(st.rpe)>=9.5; }).length;
+    },0);
+  },0);
+  if (hard<3) return null;
+  return {sessions:last14.length, hardSets:hard};
+}
+
+function renderProgressionAdvisor() {
+  var host = document.getElementById('progression-advisor');
+  if (!host) return;
+  var list = getProgressionAdvice();
+  var hint = deloadSessionHint();
+
+  if (!list.length && !hint){
+    host.style.display='none';
+    host.innerHTML='';
+    return;
+  }
+  host.style.display='';
+  var html = '';
+
+  if (hint){
+    html += '<div style="background:rgba(232,255,71,0.07);border:1px solid var(--accent);border-radius:var(--radius);padding:12px;margin-bottom:10px">'+
+      '<div style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:4px">⚠ Segnale di affaticamento</div>'+
+      '<div style="font-size:13px;color:var(--text2);line-height:1.45">'+hint.sessions+' sessioni negli ultimi 14 giorni con '+hint.hardSets+' serie a RPE 9.5+. Programma 3-4 giorni di scarico (60-70% del carico, -50% serie, RPE 6-7).</div></div>';
+  }
+
+  list.forEach(function(r){
+    var isDeload = r.action==='deload';
+    var presc = isDeload ? deloadPrescription(r.exerciseId) : progressionPrescription(r.exerciseId);
+    var color = isDeload ? 'var(--green)' : 'var(--accent)';
+    var tag = isDeload ? 'DELOAD' : 'PROGRESSI';
+    var title = isDeload ? 'Tetto raggiunto, scarica' : 'Aumenta il carico';
+    var body = isDeload
+      ? 'Sei fermo a <b>'+r.last.reps+' rip × '+r.last.weight+'kg</b> da '+r.streak+' sessioni. Prossima settimana: <b>'+presc.sets+'×'+presc.reps+(presc.loaded?' @ '+presc.weight+'kg':'')+'</b> ('+presc.loadLabel+').'
+      : 'Ultima serie <b>'+r.last.reps+' rip'+(r.loaded?' @ '+r.last.weight+'kg':'')+'</b>. Prossimo passo: <b>'+presc.loadLabel+'</b>, riparte da '+presc.reps+' rip.';
+
+    html += '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">'+
+      '<div class="flex justify-between items-center" style="margin-bottom:5px">'+
+        '<div style="font-size:14px;font-weight:700;color:var(--text)">'+(r.icon||'')+' '+r.name+'</div>'+
+        '<div style="font-size:10px;font-weight:800;letter-spacing:0.5px;padding:2px 7px;border-radius:20px;background:'+color+';color:#000">'+tag+'</div>'+
+      '</div>'+
+      '<div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+body+'</div>'+
+      '<div class="flex gap-8">'+
+        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
+        '<button class="btn btn-xs btn-secondary" onclick="showPage(\'template\')">Apri scheda</button>'+
+      '</div></div>';
+  });
+
+  host.innerHTML = '<div class="section-header" style="margin-top:16px"><div class="section-title">Progressione &amp; Deload</div></div>'+
+    '<div style="padding:0 16px"><div style="font-size:12px;color:var(--text3);margin-bottom:10px">Controlla gli esercizi che hanno chiuso la progressione e applica il passo consigliato con un tocco.</div>'+html+'</div>';
 }
 
 // exerciseType governs which inputs are shown in the set row:
@@ -1698,6 +1992,7 @@ function renderHome() {
   } else {
     document.getElementById('home-last-session').innerHTML = '<div style="padding:0 16px 16px;color:var(--text3);font-size:14px">Nessuna sessione. Inizia il primo allenamento!</div>';
   }
+  renderProgressionAdvisor();
 }
 
 // ============================================================
@@ -3428,6 +3723,30 @@ var MIS_FIELDS = [
 var misChartField = 'weight';
 var misChartInstance = null;
 
+// Chart tabs. Mirrored measures (biceps/quads) are one tab that draws BOTH
+// sides, otherwise the left column of the measurement modal is invisible.
+var MIS_CHART_GROUPS = [
+  {key:'weight',   label:'Peso',      unit:'kg', sides:false, fields:['weight']},
+  {key:'chest',    label:'Petto',     unit:'cm', sides:false, fields:['chest']},
+  {key:'abdomen',  label:'Addome',    unit:'cm', sides:false, fields:['abdomen']},
+  {key:'bicep',    label:'Bicipite',  unit:'cm', sides:true,
+   fields:[{key:'rightBicep', label:'Bicipite dx', color:'#e8ff47'},
+           {key:'leftBicep',  label:'Bicipite sx', color:'#1e90ff'}]},
+  {key:'quad',     label:'Quad',      unit:'cm', sides:true,
+   fields:[{key:'rightQuad', label:'Quad dx', color:'#ff6b35'},
+           {key:'leftQuad',  label:'Quad sx', color:'#a855f7'}]},
+];
+var MIS_CHART_COLORS = ['#e8ff47','#1e90ff','#ff6b35','#a855f7','#2ed573'];
+
+function misChartGroup() {
+  return MIS_CHART_GROUPS.find(function(g){ return g.key===misChartField; }) || MIS_CHART_GROUPS[0];
+}
+
+function misUnit(key) {
+  var f = MIS_FIELDS.find(function(x){ return x.key===key; });
+  return f ? f.unit : 'cm';
+}
+
 function openAddMisurazione() {
   document.getElementById('mis-modal-title').textContent = 'Nuova misurazione';
   document.getElementById('mis-editing-id').value = '';
@@ -3498,20 +3817,79 @@ function switchMisChart(field, el) {
 }
 
 function renderMisChart() {
-  var meta = MIS_FIELDS.find(function(f){ return f.key===misChartField; }) || MIS_FIELDS[0];
-  document.getElementById('mis-chart-title').textContent = meta.label+' nel tempo ('+meta.unit+')';
+  var group = misChartGroup();
+  var titleEl = document.getElementById('mis-chart-title');
+  if (titleEl) titleEl.textContent = (group.sides ? group.label+' dx / sx' : group.label)+' nel tempo ('+group.unit+')';
+
+  // One shared date axis so mirrored lines stay aligned; missing values are null
   var sorted = state.misurazioni.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
-  var labels=[], data=[];
+  var dates = [];
+  var seen = {};
   sorted.forEach(function(m){
-    if (m[misChartField]!=null){ labels.push(new Date(m.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'})); data.push(m[misChartField]); }
+    if (seen[m.date]) return;
+    var any = group.fields.some(function(f){ return m[f.key]!=null; });
+    if (!any) return;
+    seen[m.date]=true;
+    dates.push(m.date);
   });
+  var labels = dates.map(function(d){ return new Date(d).toLocaleDateString('it-IT',{day:'numeric',month:'short'}); });
+
+  var datasets = group.fields.map(function(f,i){
+    var color = f.color || MIS_CHART_COLORS[i%MIS_CHART_COLORS.length];
+    return {
+      label: f.label || group.label,
+      data: dates.map(function(d){
+        var row = sorted.find(function(m){ return m.date===d; });
+        return (row && row[f.key]!=null) ? row[f.key] : null;
+      }),
+      borderColor: color,
+      backgroundColor: color+'14',
+      borderWidth: 2,
+      fill: !group.sides,
+      tension: 0.35,
+      spanGaps: true,
+      pointBackgroundColor: color,
+      pointBorderColor: color,
+      pointRadius: labels.length<20 ? 4 : 2,
+      pointHoverRadius: 6
+    };
+  });
+
   if (misChartInstance){ misChartInstance.destroy(); misChartInstance=null; }
-  misChartInstance = new Chart(document.getElementById('chart-misurazioni').getContext('2d'),{
+  var canvas = document.getElementById('chart-misurazioni');
+  if (!canvas) return;
+  misChartInstance = new Chart(canvas.getContext('2d'),{
     type:'line',
-    data:{labels:labels,datasets:[{data:data,borderColor:'#e8ff47',backgroundColor:'rgba(232,255,71,0.08)',borderWidth:2,fill:true,tension:0.35,pointBackgroundColor:'#e8ff47',pointRadius:labels.length<20?4:2,pointHoverRadius:6}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return c.parsed.y+' '+meta.unit;}}}},
-      scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
+    data:{labels:labels,datasets:datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:function(c){
+          if (c.parsed.y==null) return c.dataset.label+': —';
+          return c.dataset.label+': '+c.parsed.y+' '+group.unit;
+        }}}
+      },
+      scales:{x:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}},
+              y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#666',font:{size:10}}}}}
   });
+
+  renderMisChartLegend(group);
+}
+
+function renderMisChartLegend(group) {
+  var el = document.getElementById('mis-chart-legend');
+  if (!el) return;
+  if (!group.sides){ el.style.display='none'; el.innerHTML=''; return; }
+  var rows = group.fields.map(function(f,i){
+    var color = f.color || MIS_CHART_COLORS[i%MIS_CHART_COLORS.length];
+    var has = state.misurazioni.some(function(m){ return m[f.key]!=null; });
+    return '<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:'+(has?'var(--text2)':'var(--text3)')+'">'+
+      '<span style="width:11px;height:11px;border-radius:3px;background:'+color+'"></span>'+
+      f.label+'</div>';
+  }).join('');
+  el.innerHTML = rows;
+  el.style.display = 'flex';
 }
 
 function renderMisList() {
@@ -3532,7 +3910,7 @@ function renderMisList() {
     }
     function fieldBlock(field,label){
       if (m[field]==null) return '';
-      var u=MIS_FIELDS.find(function(f){return f.key===field;}).unit;
+      var u=misUnit(field);
       return '<div class="mis-field"><div class="mis-field-val">'+m[field]+' <span style="font-size:11px;color:var(--text2);font-weight:400">'+u+'</span>'+deltaHtml(field)+'</div><div class="mis-field-lbl">'+label+'</div></div>';
     }
     return '<div class="mis-card">'+
