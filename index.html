@@ -519,14 +519,28 @@ select.input{appearance:none}
   <div class="modal">
     <div class="modal-handle"></div>
     <div class="modal-title" id="exercise-config-title">Configura esercizio</div>
+    <!-- type badge -->
+    <div id="cfg-type-badge" style="margin-bottom:12px"></div>
     <div class="flex gap-8 mb-12">
       <div style="flex:1"><label class="input-label">Serie</label><input type="number" class="input" id="cfg-sets" value="3" min="1" max="30"></div>
-      <div style="flex:1" id="cfg-reps-cell"><label class="input-label">Ripetizioni</label><input type="number" class="input" id="cfg-reps" value="10" min="1" max="100"></div>
-      <div style="flex:1"><label class="input-label">Peso (kg)</label><input type="number" class="input" id="cfg-weight" value="0" min="0" step="0.5"></div>
+      <!-- reps: hidden for cardio/timed -->
+      <div style="flex:1" id="cfg-reps-cell"><label class="input-label" id="cfg-reps-label">Ripetizioni</label><input type="number" class="input" id="cfg-reps" value="10" min="1" max="100"></div>
+      <!-- weight: hidden for power/bodyweight/cardio; label changes for carry -->
+      <div style="flex:1" id="cfg-weight-cell"><label class="input-label" id="cfg-weight-label">Peso (kg)</label><input type="number" class="input" id="cfg-weight" value="0" min="0" step="0.5"></div>
+    </div>
+    <!-- distance row: carry only -->
+    <div class="flex gap-8 mb-12" id="cfg-distance-row" style="display:none">
+      <div style="flex:1"><label class="input-label">Distanza (m)</label><input type="number" class="input" id="cfg-distance" value="30" min="1" step="5"></div>
+      <div style="flex:1"></div>
+    </div>
+    <!-- duration row: cardio / timed -->
+    <div class="flex gap-8 mb-12" id="cfg-duration-row" style="display:none">
+      <div style="flex:1"><label class="input-label" id="cfg-duration-label">Durata (min)</label><input type="number" class="input" id="cfg-duration" value="20" min="1"></div>
+      <div style="flex:1"></div>
     </div>
     <div class="flex gap-8 mb-12">
       <div style="flex:1"><label class="input-label">Recupero (sec)</label><input type="number" class="input" id="cfg-rest" value="120" min="0" step="5"></div>
-      <div style="flex:1">
+      <div style="flex:1" id="cfg-rpe-cell">
         <label class="input-label">RPE target</label>
         <select class="input" id="cfg-rpe">
           <option value="">-</option>
@@ -535,7 +549,7 @@ select.input{appearance:none}
         </select>
       </div>
     </div>
-    <div class="input-group">
+    <div class="input-group" id="cfg-warmup-row">
       <label class="input-label">Warm-up</label>
       <div class="chip-row" id="warmup-chips">
         <div class="chip selected" data-val="0" onclick="selectWarmup(0,this)">Nessuna</div>
@@ -599,6 +613,7 @@ select.input{appearance:none}
         <option value="">Seleziona...</option>
         <option>Petto</option><option>Schiena</option><option>Spalle</option>
         <option>Bicipiti</option><option>Tricipiti</option><option>Gambe</option><option>Addome</option>
+        <option>Corpo intero</option><option>Cardio</option>
       </select>
     </div>
     <div class="input-group">
@@ -607,7 +622,20 @@ select.input{appearance:none}
         <div class="chip selected" data-cat="Multiarticolare" onclick="selectCxCat('Multiarticolare',this)">Multiarticolare</div>
         <div class="chip" data-cat="Isolamento" onclick="selectCxCat('Isolamento',this)">Isolamento</div>
         <div class="chip" data-cat="Complementare" onclick="selectCxCat('Complementare',this)">Complementare</div>
+        <div class="chip" data-cat="Potenza" onclick="selectCxCat('Potenza',this)">Potenza</div>
+        <div class="chip" data-cat="Carry" onclick="selectCxCat('Carry',this)">Carry</div>
         <div class="chip" data-cat="Cardio" onclick="selectCxCat('Cardio',this)">Cardio</div>
+      </div>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Tipo di tracciamento</label>
+      <div class="chip-row" id="cx-type-chips">
+        <div class="chip selected" data-type="strength" onclick="selectCxType('strength',this)">Peso + Rip</div>
+        <div class="chip" data-type="bodyweight" onclick="selectCxType('bodyweight',this)">Solo rip</div>
+        <div class="chip" data-type="carry" onclick="selectCxType('carry',this)">Peso + m</div>
+        <div class="chip" data-type="power" onclick="selectCxType('power',this)">Potenza</div>
+        <div class="chip" data-type="timed" onclick="selectCxType('timed',this)">Tempo (sec)</div>
+        <div class="chip" data-type="cardio" onclick="selectCxType('cardio',this)">Cardio (min)</div>
       </div>
     </div>
     <div class="input-group">
@@ -806,7 +834,7 @@ select.input{appearance:none}
 // ============================================================
 // DATA
 // ============================================================
-const MUSCLES = ['Petto','Schiena','Spalle','Bicipiti','Tricipiti','Gambe','Addome'];
+const MUSCLES = ['Petto','Schiena','Spalle','Bicipiti','Tricipiti','Gambe','Addome','Corpo intero','Cardio'];
 const MUSCLE_COLORS = {Petto:'#e8ff47',Schiena:'#ff6b35',Spalle:'#1e90ff',Bicipiti:'#a855f7',Tricipiti:'#2ed573',Gambe:'#ff4757',Addome:'#ff9f43'};
 const EMOJIS = ['🏋️','💪','🔥','⚡','🎯','🔄','🚣','🏔️','🌙','🦅','⬆️','⬇️','🔨','💀','🦵','🦶','🤸','🧗','🥊','🎽','⚙️','🔒','⚓','🦋','📐','🤷','🚶','🏃','🧘','🤼'];
 
@@ -856,53 +884,89 @@ function buildRepSelector(inputId, reps, exId, onchangeExpr) {
   '</div>';
 }
 
+// exerciseType governs which inputs are shown in the set row:
+//   'strength' → peso (kg) + reps          (default)
+//   'carry'    → peso (kg) + distanza (m)
+//   'power'    → reps only (quality, no load)
+//   'cardio'   → durata (min)
+//   'timed'    → durata (sec) + opz. peso
+//   'bodyweight'→ reps only (no weight)
 const BUILTIN_EXERCISES = [
-  {id:'bp',name:'Panca Piana',muscle:'Petto',icon:'🏋️',category:'Multiarticolare'},
-  {id:'bpi',name:'Panca Inclinata',muscle:'Petto',icon:'📐',category:'Multiarticolare'},
-  {id:'bpd',name:'Panca Declinata',muscle:'Petto',icon:'📐',category:'Multiarticolare'},
-  {id:'dip',name:'Dip alle parallele',muscle:'Petto',icon:'🤸',category:'Multiarticolare'},
-  {id:'fly',name:'Croci con manubri',muscle:'Petto',icon:'🦋',category:'Isolamento'},
-  {id:'cfly',name:'Cavi incrociati',muscle:'Petto',icon:'🔄',category:'Isolamento'},
-  {id:'pu0',name:'Piegamenti',muscle:'Petto',icon:'💪',category:'Complementare'},
-  {id:'dl',name:'Stacco da terra',muscle:'Schiena',icon:'⚙️',category:'Multiarticolare'},
-  {id:'row',name:'Rematore bilanciere',muscle:'Schiena',icon:'🚣',category:'Multiarticolare'},
-  {id:'drow',name:'Rematore manubrio',muscle:'Schiena',icon:'🚣',category:'Isolamento'},
-  {id:'pullup',name:'Trazioni',muscle:'Schiena',icon:'🏔️',category:'Multiarticolare'},
-  {id:'lat',name:'Lat machine',muscle:'Schiena',icon:'🎯',category:'Multiarticolare'},
-  {id:'seated',name:'Rematore ai cavi',muscle:'Schiena',icon:'🔄',category:'Multiarticolare'},
-  {id:'shrug',name:'Scrollate',muscle:'Schiena',icon:'🤷',category:'Isolamento'},
-  {id:'hyp',name:'Iperestensioni',muscle:'Schiena',icon:'🌙',category:'Complementare'},
-  {id:'ohp',name:'Lento avanti bilanciere',muscle:'Spalle',icon:'🏋️',category:'Multiarticolare'},
-  {id:'dohp',name:'Lento avanti manubri',muscle:'Spalle',icon:'🏋️',category:'Multiarticolare'},
-  {id:'lr',name:'Alzate laterali',muscle:'Spalle',icon:'🦅',category:'Isolamento'},
-  {id:'fr',name:'Alzate frontali',muscle:'Spalle',icon:'⬆️',category:'Isolamento'},
-  {id:'rr',name:'Alzate posteriori',muscle:'Spalle',icon:'⬆️',category:'Isolamento'},
-  {id:'uprw',name:'Tirate al mento',muscle:'Spalle',icon:'⚓',category:'Multiarticolare'},
-  {id:'bc',name:'Curl bilanciere',muscle:'Bicipiti',icon:'💪',category:'Isolamento'},
-  {id:'dc',name:'Curl manubri',muscle:'Bicipiti',icon:'💪',category:'Isolamento'},
-  {id:'hc',name:'Curl martello',muscle:'Bicipiti',icon:'🔨',category:'Isolamento'},
-  {id:'cc',name:'Curl ai cavi',muscle:'Bicipiti',icon:'🔄',category:'Isolamento'},
-  {id:'prc',name:'Curl al palo',muscle:'Bicipiti',icon:'🔒',category:'Isolamento'},
-  {id:'ske',name:'Skull crusher',muscle:'Tricipiti',icon:'💀',category:'Isolamento'},
-  {id:'tpd',name:'Pushdown cavi',muscle:'Tricipiti',icon:'⬇️',category:'Isolamento'},
-  {id:'to',name:'Tricipiti overhead',muscle:'Tricipiti',icon:'⬆️',category:'Isolamento'},
-  {id:'kbe',name:'Kick back',muscle:'Tricipiti',icon:'🦵',category:'Isolamento'},
-  {id:'cgbp',name:'Close grip bench',muscle:'Tricipiti',icon:'🏋️',category:'Multiarticolare'},
-  {id:'sq',name:'Squat bilanciere',muscle:'Gambe',icon:'👑',category:'Multiarticolare'},
-  {id:'fsq',name:'Front squat',muscle:'Gambe',icon:'👑',category:'Multiarticolare'},
-  {id:'hsq',name:'Hack squat',muscle:'Gambe',icon:'⚙️',category:'Multiarticolare'},
-  {id:'lp',name:'Leg press',muscle:'Gambe',icon:'🦵',category:'Multiarticolare'},
-  {id:'le',name:'Leg extension',muscle:'Gambe',icon:'🦵',category:'Isolamento'},
-  {id:'lc',name:'Leg curl',muscle:'Gambe',icon:'🦵',category:'Isolamento'},
-  {id:'ll',name:'Affondi',muscle:'Gambe',icon:'🚶',category:'Complementare'},
-  {id:'rdl',name:'Stacco rumeno',muscle:'Gambe',icon:'⚙️',category:'Multiarticolare'},
-  {id:'gcal',name:'Polpacci in piedi',muscle:'Gambe',icon:'🦶',category:'Isolamento'},
-  {id:'scal',name:'Polpacci seduti',muscle:'Gambe',icon:'🦶',category:'Isolamento'},
-  {id:'cr',name:'Crunch',muscle:'Addome',icon:'🔥',category:'Isolamento'},
-  {id:'plk',name:'Plank',muscle:'Addome',icon:'📏',category:'Complementare'},
-  {id:'lraise',name:'Leg raise',muscle:'Addome',icon:'🦵',category:'Isolamento'},
-  {id:'abw',name:'Ab wheel',muscle:'Addome',icon:'🎡',category:'Complementare'},
-  {id:'rv',name:'Russian twist',muscle:'Addome',icon:'🔄',category:'Isolamento'},
+  // — PETTO —
+  {id:'bp',  name:'Panca Piana',          muscle:'Petto',   icon:'🏋️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'bpi', name:'Panca Inclinata',       muscle:'Petto',   icon:'📐',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'bpd', name:'Panca Declinata',       muscle:'Petto',   icon:'📐',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'dip', name:'Dip alle parallele',    muscle:'Petto',   icon:'🤸',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'fly', name:'Croci con manubri',     muscle:'Petto',   icon:'🦋',category:'Isolamento',      exerciseType:'strength'},
+  {id:'cfly',name:'Cavi incrociati',       muscle:'Petto',   icon:'🔄',category:'Isolamento',      exerciseType:'strength'},
+  {id:'pu0', name:'Push-up / Piegamenti', muscle:'Petto',   icon:'💪',category:'Complementare',   exerciseType:'bodyweight'},
+  // — SCHIENA —
+  {id:'dl',    name:'Stacco da terra',      muscle:'Schiena', icon:'⚙️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'tbdl',  name:'Trap-bar deadlift',    muscle:'Schiena', icon:'⚙️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'row',   name:'Rematore bilanciere',  muscle:'Schiena', icon:'🚣',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'drow',  name:'Rematore manubrio',    muscle:'Schiena', icon:'🚣',category:'Isolamento',      exerciseType:'strength'},
+  {id:'pullup',name:'Trazioni',             muscle:'Schiena', icon:'🏔️',category:'Multiarticolare', exerciseType:'bodyweight'},
+  {id:'lat',   name:'Lat machine',          muscle:'Schiena', icon:'🎯',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'seated',name:'Rematore ai cavi',     muscle:'Schiena', icon:'🔄',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'shrug', name:'Scrollate',            muscle:'Schiena', icon:'🤷',category:'Isolamento',      exerciseType:'strength'},
+  {id:'hyp',   name:'Iperestensioni',       muscle:'Schiena', icon:'🌙',category:'Complementare',   exerciseType:'bodyweight'},
+  // — SPALLE —
+  {id:'ohp',  name:'Military Press (bilanciere)', muscle:'Spalle', icon:'🏋️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'dohp', name:'Lento avanti manubri',        muscle:'Spalle', icon:'🏋️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'lr',   name:'Alzate laterali',             muscle:'Spalle', icon:'🦅',category:'Isolamento',      exerciseType:'strength'},
+  {id:'fr',   name:'Alzate frontali',             muscle:'Spalle', icon:'⬆️',category:'Isolamento',      exerciseType:'strength'},
+  {id:'rr',   name:'Alzate posteriori',           muscle:'Spalle', icon:'⬆️',category:'Isolamento',      exerciseType:'strength'},
+  {id:'facepull',name:'Face pull',               muscle:'Spalle', icon:'🔄',category:'Complementare',   exerciseType:'strength'},
+  {id:'uprw', name:'Tirate al mento',             muscle:'Spalle', icon:'⚓',category:'Multiarticolare', exerciseType:'strength'},
+  // — BICIPITI —
+  {id:'bc',  name:'Curl bilanciere',  muscle:'Bicipiti', icon:'💪',category:'Isolamento', exerciseType:'strength'},
+  {id:'dc',  name:'Curl manubri',     muscle:'Bicipiti', icon:'💪',category:'Isolamento', exerciseType:'strength'},
+  {id:'hc',  name:'Curl martello',    muscle:'Bicipiti', icon:'🔨',category:'Isolamento', exerciseType:'strength'},
+  {id:'cc',  name:'Curl ai cavi',     muscle:'Bicipiti', icon:'🔄',category:'Isolamento', exerciseType:'strength'},
+  {id:'prc', name:'Curl al palo',     muscle:'Bicipiti', icon:'🔒',category:'Isolamento', exerciseType:'strength'},
+  // — TRICIPITI —
+  {id:'ske', name:'Skull crusher',      muscle:'Tricipiti', icon:'💀',category:'Isolamento',      exerciseType:'strength'},
+  {id:'tpd', name:'Pushdown cavi',      muscle:'Tricipiti', icon:'⬇️',category:'Isolamento',      exerciseType:'strength'},
+  {id:'to',  name:'Tricipiti overhead', muscle:'Tricipiti', icon:'⬆️',category:'Isolamento',      exerciseType:'strength'},
+  {id:'kbe', name:'Kick back',          muscle:'Tricipiti', icon:'🦵',category:'Isolamento',      exerciseType:'strength'},
+  {id:'cgbp',name:'Close grip bench',   muscle:'Tricipiti', icon:'🏋️',category:'Multiarticolare', exerciseType:'strength'},
+  // — GAMBE —
+  {id:'sq',   name:'Squat bilanciere',      muscle:'Gambe', icon:'👑',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'fsq',  name:'Front squat',           muscle:'Gambe', icon:'👑',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'gsq',  name:'Goblet squat',          muscle:'Gambe', icon:'🥂',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'hsq',  name:'Hack squat',            muscle:'Gambe', icon:'⚙️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'lp',   name:'Leg press',             muscle:'Gambe', icon:'🦵',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'le',   name:'Leg extension',         muscle:'Gambe', icon:'🦵',category:'Isolamento',      exerciseType:'strength'},
+  {id:'lc',   name:'Leg curl',              muscle:'Gambe', icon:'🦵',category:'Complementare',   exerciseType:'strength'},
+  {id:'ll',   name:'Affondi',               muscle:'Gambe', icon:'🚶',category:'Complementare',   exerciseType:'bodyweight'},
+  {id:'wlunge',name:'Walking lunges',       muscle:'Gambe', icon:'🚶',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'bss',  name:'Bulgarian split squat', muscle:'Gambe', icon:'🦵',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'rdl',  name:'Romanian deadlift',     muscle:'Gambe', icon:'⚙️',category:'Multiarticolare', exerciseType:'strength'},
+  {id:'ht',   name:'Hip thrust',            muscle:'Gambe', icon:'🔥',category:'Complementare',   exerciseType:'strength'},
+  {id:'gcal', name:'Polpacci in piedi',     muscle:'Gambe', icon:'🦶',category:'Complementare',   exerciseType:'strength'},
+  {id:'scal', name:'Polpacci seduti',       muscle:'Gambe', icon:'🦶',category:'Complementare',   exerciseType:'strength'},
+  // — ADDOME / CORE —
+  {id:'cr',      name:'Crunch',              muscle:'Addome', icon:'🔥',category:'Isolamento',    exerciseType:'bodyweight'},
+  {id:'plk',     name:'Plank',               muscle:'Addome', icon:'📏',category:'Complementare', exerciseType:'timed'},
+  {id:'lraise',  name:'Leg raise',           muscle:'Addome', icon:'🦵',category:'Isolamento',    exerciseType:'bodyweight'},
+  {id:'abw',     name:'Ab wheel',            muscle:'Addome', icon:'🎡',category:'Complementare', exerciseType:'bodyweight'},
+  {id:'rv',      name:'Russian twist',       muscle:'Addome', icon:'🔄',category:'Isolamento',    exerciseType:'bodyweight'},
+  {id:'pallof',  name:'Pallof press',        muscle:'Addome', icon:'🔀',category:'Complementare', exerciseType:'strength'},
+  {id:'deadbug', name:'Dead bug',            muscle:'Addome', icon:'🐛',category:'Complementare', exerciseType:'bodyweight'},
+  // — POTENZA —
+  {id:'mbct',  name:'Medicine ball chest throw',     muscle:'Corpo intero', icon:'⚡',category:'Potenza', exerciseType:'power'},
+  {id:'mbrt',  name:'Medicine ball rotational throw', muscle:'Corpo intero', icon:'💫',category:'Potenza', exerciseType:'power'},
+  {id:'boxjmp',name:'Box jump',                      muscle:'Corpo intero', icon:'📦',category:'Potenza', exerciseType:'power'},
+  {id:'vertjmp',name:'Vertical jump',                muscle:'Corpo intero', icon:'⬆️',category:'Potenza', exerciseType:'power'},
+  {id:'brdjmp',name:'Broad jump',                    muscle:'Corpo intero', icon:'🦘',category:'Potenza', exerciseType:'power'},
+  // — CARRY —
+  {id:'fw',  name:"Farmer's walk",   muscle:'Corpo intero', icon:'🌾',category:'Carry', exerciseType:'carry'},
+  {id:'sc2', name:'Suitcase carry',  muscle:'Corpo intero', icon:'💼',category:'Carry', exerciseType:'carry'},
+  // — CARDIO / CONDITIONING —
+  {id:'cardio',name:'Cardio moderato',  muscle:'Cardio', icon:'🏃',category:'Cardio', exerciseType:'cardio'},
+  {id:'rowing',name:'Vogatore',         muscle:'Cardio', icon:'🚣',category:'Cardio', exerciseType:'cardio'},
+  {id:'bike',  name:'Cyclette / Bike',  muscle:'Cardio', icon:'🚴',category:'Cardio', exerciseType:'cardio'},
+  {id:'run',   name:'Corsa',            muscle:'Cardio', icon:'🏃',category:'Cardio', exerciseType:'cardio'},
 ];
 
 // ============================================================
@@ -1773,23 +1837,81 @@ function configureTemplateExercise(idx) {
   openExerciseConfig(e.exerciseId, e);
 }
 
+// Returns the exerciseType for an exercise, defaulting to 'strength'
+function getExerciseType(exId) {
+  var ex = findExercise(exId);
+  return (ex && ex.exerciseType) ? ex.exerciseType : 'strength';
+}
+
+// Type badge labels and colors
+var TYPE_META = {
+  strength:   {label:'Forza · Peso + Rip',  color:'#e8ff47'},
+  bodyweight: {label:'Corpo libero · Solo rip', color:'#2ed573'},
+  carry:      {label:'Carry · Peso + Distanza (m)', color:'#ff9f43'},
+  power:      {label:'Potenza · Qualità del movimento', color:'#a855f7'},
+  timed:      {label:'Isometrico · Secondi', color:'#1e90ff'},
+  cardio:     {label:'Cardio · Minuti', color:'#ff6b35'},
+};
+
+function updateCfgModalForType(exType, existing) {
+  var meta = TYPE_META[exType] || TYPE_META.strength;
+  // Type badge
+  document.getElementById('cfg-type-badge').innerHTML =
+    '<span style="font-size:11px;font-weight:700;color:'+meta.color+';background:'+meta.color+'22;border:1px solid '+meta.color+'55;border-radius:20px;padding:3px 10px">'+meta.label+'</span>';
+  // Show/hide cells
+  var showWeight  = (exType==='strength'||exType==='carry'||exType==='timed');
+  var showReps    = (exType==='strength'||exType==='bodyweight'||exType==='power');
+  var showDist    = (exType==='carry');
+  var showDur     = (exType==='cardio'||exType==='timed');
+  var showWarmup  = (exType==='strength'||exType==='bodyweight');
+  var showRpe     = (exType!=='cardio'&&exType!=='power');
+  document.getElementById('cfg-weight-cell').style.display  = showWeight  ? '' : 'none';
+  document.getElementById('cfg-reps-cell').style.display    = showReps    ? '' : 'none';
+  document.getElementById('cfg-distance-row').style.display = showDist    ? '' : 'none';
+  document.getElementById('cfg-duration-row').style.display = showDur     ? '' : 'none';
+  document.getElementById('cfg-warmup-row').style.display   = showWarmup  ? '' : 'none';
+  document.getElementById('cfg-rpe-cell').style.display     = showRpe     ? '' : 'none';
+  // Label tweaks
+  if (exType==='timed') {
+    document.getElementById('cfg-duration-label').textContent = 'Durata (sec)';
+    document.getElementById('cfg-weight-label').textContent   = 'Carico (kg)';
+  } else if (exType==='cardio') {
+    document.getElementById('cfg-duration-label').textContent = 'Durata (min)';
+  } else if (exType==='carry') {
+    document.getElementById('cfg-weight-label').textContent   = 'Peso (kg)';
+  } else {
+    document.getElementById('cfg-weight-label').textContent   = 'Peso (kg)';
+  }
+  // Progression panel: hide reps increment for non-rep exercises
+  var incRepsRow = document.getElementById('inc-reps-row');
+  if (incRepsRow) incRepsRow.parentElement.style.display = showReps ? '' : 'none';
+}
+
 function openExerciseConfig(exId, existing) {
   var ex = findExercise(exId);
+  var exType = getExerciseType(exId);
   document.getElementById('exercise-config-title').textContent = ex ? ex.name : 'Configura esercizio';
   document.getElementById('cfg-sets').value = existing ? existing.sets : 3;
+
+  // Reps (only for strength/bodyweight/power)
   var progression = getRepProgression(exId);
   var initReps = existing ? existing.reps : progression[0];
   var snappedReps = snapToProgression(initReps, progression);
-  // Render rep selector in place of the free input
   var repCell = document.getElementById('cfg-reps-cell');
-  repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
-  document.getElementById('cfg-weight').value = existing ? existing.weight : 0;
-  document.getElementById('cfg-rest').value = existing ? (existing.rest||120) : 120;
-  document.getElementById('cfg-rpe').value = existing ? (existing.rpe||'') : '';
-  document.getElementById('cfg-notes').value = existing ? (existing.notes||'') : '';
+  repCell.innerHTML = '<label class="input-label" id="cfg-reps-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
+
+  document.getElementById('cfg-weight').value   = existing ? (existing.weight||0)   : 0;
+  document.getElementById('cfg-rest').value     = existing ? (existing.rest||120)   : 120;
+  document.getElementById('cfg-rpe').value      = existing ? (existing.rpe||'')     : '';
+  document.getElementById('cfg-notes').value    = existing ? (existing.notes||'')   : '';
+  // Carry / duration fields
+  if (document.getElementById('cfg-distance')) document.getElementById('cfg-distance').value = existing ? (existing.distance||30) : 30;
+  if (document.getElementById('cfg-duration')) document.getElementById('cfg-duration').value = existing ? (existing.duration||20) : 20;
+
   warmupCount = existing ? (existing.warmup||0) : 0;
-  increments = existing && existing.increments ? {weight:existing.increments.weight||0,sets:existing.increments.sets||0,reps:existing.increments.reps||0} : {weight:0,sets:0,reps:0};
+  increments  = existing && existing.increments ? {weight:existing.increments.weight||0,sets:existing.increments.sets||0,reps:existing.increments.reps||0} : {weight:0,sets:0,reps:0};
   document.querySelectorAll('#warmup-chips .chip').forEach(function(c){c.classList.toggle('selected',parseInt(c.dataset.val)===warmupCount);});
+  updateCfgModalForType(exType, existing);
   updateIncrementDisplay();
   openModal('modal-exercise-config');
 }
@@ -1850,16 +1972,22 @@ function updateIncrementDisplay() {
 function saveExerciseConfig() {
   var exId = pendingExerciseId;
   if (!exId) { showToast('Errore: nessun esercizio selezionato'); return; }
+  var exType = getExerciseType(exId);
+  var distEl = document.getElementById('cfg-distance');
+  var durEl  = document.getElementById('cfg-duration');
   var cfg = {
-    exerciseId: exId,
-    sets: parseInt(document.getElementById('cfg-sets').value)||3,
-    reps: parseInt(document.getElementById('cfg-reps').value)||10,
-    weight: parseFloat(document.getElementById('cfg-weight').value)||0,
-    rest: parseInt(document.getElementById('cfg-rest').value)||120,
-    rpe: document.getElementById('cfg-rpe').value,
-    notes: document.getElementById('cfg-notes').value,
-    warmup: warmupCount,
-    increments: {weight:increments.weight,sets:increments.sets,reps:increments.reps},
+    exerciseId:   exId,
+    exerciseType: exType,
+    sets:     parseInt(document.getElementById('cfg-sets').value)||3,
+    reps:     parseInt(document.getElementById('cfg-reps')    ? document.getElementById('cfg-reps').value    : 0)||0,
+    weight:   parseFloat(document.getElementById('cfg-weight') ? document.getElementById('cfg-weight').value : 0)||0,
+    distance: distEl ? (parseFloat(distEl.value)||30) : 0,
+    duration: durEl  ? (parseFloat(durEl.value)||20)  : 0,
+    rest:     parseInt(document.getElementById('cfg-rest').value)||120,
+    rpe:      document.getElementById('cfg-rpe').value,
+    notes:    document.getElementById('cfg-notes').value,
+    warmup:   warmupCount,
+    increments:{weight:increments.weight,sets:increments.sets,reps:increments.reps},
   };
   if (pickerMode==='template') {
     if (configExerciseIdx!==null) editingTemplateExercises[configExerciseIdx]=cfg;
@@ -1879,15 +2007,19 @@ function saveExerciseConfig() {
 // ============================================================
 // CUSTOM EXERCISE
 // ============================================================
+var cxType = 'strength';
+
 function openCreateCustomExercise() {
   closeModal('modal-exercise-picker');
   cxCategory = 'Multiarticolare';
-  cxEmoji = '🏋️';
+  cxType     = 'strength';
+  cxEmoji    = '🏋️';
   document.getElementById('cx-name').value = '';
   document.getElementById('cx-muscle').value = '';
   document.getElementById('cx-emoji-custom').value = '';
   document.getElementById('cx-notes').value = '';
   document.querySelectorAll('#cx-category-chips .chip').forEach(function(c){c.classList.toggle('selected',c.dataset.cat==='Multiarticolare');});
+  document.querySelectorAll('#cx-type-chips .chip').forEach(function(c){c.classList.toggle('selected',c.dataset.type==='strength');});
   document.getElementById('cx-emoji-grid').innerHTML = EMOJIS.map(function(e){
     return '<div class="emoji-opt'+(e===cxEmoji?' sel':'')+'" onclick="selectCxEmoji(\''+e+'\',this)">'+e+'</div>';
   }).join('');
@@ -1897,6 +2029,12 @@ function openCreateCustomExercise() {
 function selectCxCat(cat, el) {
   cxCategory = cat;
   document.querySelectorAll('#cx-category-chips .chip').forEach(function(c){c.classList.remove('selected');});
+  el.classList.add('selected');
+}
+
+function selectCxType(type, el) {
+  cxType = type;
+  document.querySelectorAll('#cx-type-chips .chip').forEach(function(c){c.classList.remove('selected');});
   el.classList.add('selected');
 }
 
@@ -1915,7 +2053,7 @@ function saveCustomExercise() {
   var customEmoji = document.getElementById('cx-emoji-custom').value.trim();
   var icon = customEmoji||cxEmoji||'💪';
   var id = 'cx_'+Date.now();
-  state.customExercises.push({id:id,name:name,muscle:muscle,icon:icon,category:cxCategory,custom:true});
+  state.customExercises.push({id:id,name:name,muscle:muscle,icon:icon,category:cxCategory,exerciseType:cxType,custom:true});
   saveState();
   closeModal('modal-custom-exercise');
   showToast('Esercizio creato');
@@ -1972,28 +2110,42 @@ function getLastSessionDataForExercise(exId) {
 
 function buildSessionExercise(cfg) {
   var ex = findExercise(cfg.exerciseId);
-  var last = getLastSessionDataForExercise(cfg.exerciseId);
+  var exType = cfg.exerciseType || getExerciseType(cfg.exerciseId);
   var effectiveCfg = Object.assign({}, cfg);
-  if (last) {
-    var inc = last.increments || {weight:0,sets:0,reps:0};
-    effectiveCfg.weight = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
-    effectiveCfg.reps   = Math.max(1, last.reps   + (inc.reps||0));
-    // sets ALWAYS comes from the template config — never overwritten by history
-    effectiveCfg.sets   = cfg.sets;
-    // rest always comes from the template cfg, NOT from history (history doesn't store it reliably)
-    effectiveCfg.rest   = cfg.rest || 120;
+  // For strength/bodyweight: try last session data
+  if (exType === 'strength' || exType === 'bodyweight') {
+    var last = getLastSessionDataForExercise(cfg.exerciseId);
+    if (last) {
+      var inc = last.increments || {weight:0,sets:0,reps:0};
+      if (exType === 'strength') effectiveCfg.weight = Math.max(0, Math.round((last.weight+(inc.weight||0))*10)/10);
+      effectiveCfg.reps = Math.max(1, last.reps+(inc.reps||0));
+      effectiveCfg.sets = cfg.sets;
+      effectiveCfg.rest = cfg.rest || 120;
+    }
   }
-  // Progression and RPE are zeroed — user sets them fresh during this session
-  effectiveCfg.increments = {weight:0, sets:0, reps:0};
+  effectiveCfg.increments = {weight:0,sets:0,reps:0};
   effectiveCfg.rpe = '';
+  effectiveCfg.exerciseType = exType;
   var sets = [];
-  var wuCount = effectiveCfg.warmup || 0;
-  var wuPcts = wuCount === 1 ? [0.75] : wuCount === 2 ? [0.50, 0.75] : wuCount === 3 ? [0.25, 0.50, 0.75] : [];
-  for (var i=0;i<wuCount;i++) {
-    var pct = wuPcts[i] || 0.5;
-    sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*pct),rpe:'',done:false});
+  // Warmup only for strength
+  if (exType === 'strength') {
+    var wuCount = effectiveCfg.warmup || 0;
+    var wuPcts = wuCount===1?[0.75]:wuCount===2?[0.50,0.75]:wuCount===3?[0.25,0.50,0.75]:[];
+    for (var i=0;i<wuCount;i++) {
+      var pct = wuPcts[i]||0.5;
+      sets.push({type:'warmup',reps:Math.round((effectiveCfg.reps||10)*0.6),weight:Math.round((effectiveCfg.weight||0)*pct),rpe:'',done:false});
+    }
   }
-  for (var j=0;j<effectiveCfg.sets;j++) sets.push({type:'work',reps:effectiveCfg.reps,weight:effectiveCfg.weight,rpe:effectiveCfg.rpe||'',done:false});
+  for (var j=0;j<effectiveCfg.sets;j++) {
+    var s = {type:'work', done:false, rpe:''};
+    if (exType==='strength')    { s.weight=effectiveCfg.weight; s.reps=effectiveCfg.reps; }
+    if (exType==='bodyweight')  { s.reps=effectiveCfg.reps; }
+    if (exType==='power')       { s.reps=effectiveCfg.reps||4; }
+    if (exType==='carry')       { s.weight=effectiveCfg.weight; s.distance=effectiveCfg.distance||30; }
+    if (exType==='timed')       { s.duration=effectiveCfg.duration||30; s.weight=effectiveCfg.weight||0; }
+    if (exType==='cardio')      { s.duration=effectiveCfg.duration||20; }
+    sets.push(s);
+  }
   return {config:effectiveCfg, ex:ex, sets:sets};
 }
 
@@ -2053,17 +2205,52 @@ function renderSessionExercises() {
     if (inc.sets) nextParts.push('<span class="'+(inc.sets>0?'nd-up':'nd-dn')+'">'+(inc.sets>0?'+':'')+inc.sets+' serie</span>');
     if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
     var wuCount = ex.config.warmup||0;
+    var exType = ex.config.exerciseType || getExerciseType(ex.config.exerciseId);
+    // Column headers depend on type
+    var hdrCols, colTemplate;
+    if (exType==='carry') {
+      hdrCols='<span>#</span><span>Peso (kg)</span><span>Dist (m)</span><span>RPE</span><span>OK</span>';
+      colTemplate='carry';
+    } else if (exType==='cardio') {
+      hdrCols='<span>#</span><span colspan="2">Durata (min)</span><span></span><span>OK</span>';
+      colTemplate='cardio';
+    } else if (exType==='timed') {
+      hdrCols='<span>#</span><span>Carico (kg)</span><span>Durata (s)</span><span>RPE</span><span>OK</span>';
+      colTemplate='timed';
+    } else if (exType==='power'||exType==='bodyweight') {
+      hdrCols='<span>#</span><span colspan="2">Ripetizioni</span><span>RPE</span><span>OK</span>';
+      colTemplate='repsonly';
+    } else {
+      hdrCols='<span>#</span><span>Peso (kg)</span><span>Rip</span><span>RPE</span><span>OK</span>';
+      colTemplate='strength';
+    }
     var setsHtml = ex.sets.map(function(set,setIdx){
       var isWu = set.type==='warmup';
       var workNum = isWu ? '🔥' : (setIdx-wuCount+1);
-      return '<div class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+'">'+
-        '<div class="set-num'+(isWu?' wu':'')+'">'+workNum+'</div>'+
-        '<input type="number" class="set-inp" value="'+set.weight+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
-        '<input type="number" class="set-inp" value="'+set.reps+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()">'+
+      var inputs = '';
+      if (colTemplate==='strength') {
+        inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
+               '<input type="number" class="set-inp" value="'+(set.reps||0)+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()">';
+      } else if (colTemplate==='carry') {
+        inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
+               '<input type="number" class="set-inp" value="'+(set.distance||30)+'" step="5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'distance\',this.value)" onfocus="this.select()">';
+      } else if (colTemplate==='cardio') {
+        inputs='<input type="number" class="set-inp" value="'+(set.duration||20)+'" step="1" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()" style="grid-column:span 2">'+
+               '<span></span>';
+      } else if (colTemplate==='timed') {
+        inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
+               '<input type="number" class="set-inp" value="'+(set.duration||30)+'" step="5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()">';
+      } else { // repsonly
+        inputs='<input type="number" class="set-inp" value="'+(set.reps||4)+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()" style="grid-column:span 2">';
+      }
+      var rpeHtml = (colTemplate==='cardio')?'<span></span>':
         '<select class="set-rpe" onchange="updateSet('+exIdx+','+setIdx+',\'rpe\',this.value)">'+
         '<option value="">-</option>'+
         ['6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option'+(set.rpe==r?' selected':'')+'>'+r+'</option>';}).join('')+
-        '</select>'+
+        '</select>';
+      return '<div class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+'">'+
+        '<div class="set-num'+(isWu?' wu':'')+'">'+workNum+'</div>'+
+        inputs+rpeHtml+
         '<div class="set-chk'+(set.done?' ok':'')+'" onclick="toggleSet('+exIdx+','+setIdx+')">'+(set.done?'✓':'')+'</div>'+
         '</div>';
     }).join('');
@@ -2084,7 +2271,7 @@ function renderSessionExercises() {
       '<button class="btn btn-xs btn-secondary" onclick="openSessionIncrement('+exIdx+')" title="Modifica progressione">Prog.</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeSessionExercise('+exIdx+')">X</button></div></div>'+
       '<div class="sets-table">'+
-      '<div class="sets-hdr"><span>#</span><span>Peso</span><span>Rip</span><span>RPE</span><span>OK</span></div>'+
+      '<div class="sets-hdr">'+hdrCols+'</div>'+
       setsHtml+'</div>'+
       '<div class="sets-actions">'+
       '<button class="btn btn-secondary" onclick="addSet('+exIdx+')">+ Serie</button>'+
@@ -2941,27 +3128,83 @@ function saveRetroSession() {
 function _initApp() {
   resumeSessionTimerIfActive();
   if (!state.templates.length) {
+    var INC = function(w,s,r){return {weight:w,sets:s,reps:r};};
     state.templates = [
-    {name:'Push A',color:'#e8ff47',notes:'Petto, spalle, tricipiti',exercises:[
-      {exerciseId:'bp',sets:4,reps:8,weight:80,rest:180,rpe:'8',warmup:2,notes:'Scapole retratte',increments:{weight:2.5,sets:0,reps:0}},
-      {exerciseId:'bpi',sets:3,reps:10,weight:60,rest:120,rpe:'7.5',warmup:1,notes:'',increments:{weight:1.25,sets:0,reps:0}},
-      {exerciseId:'ohp',sets:3,reps:10,weight:50,rest:120,rpe:'8',warmup:1,notes:'',increments:{weight:1.25,sets:0,reps:0}},
-      {exerciseId:'lr',sets:4,reps:15,weight:14,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:0,sets:0,reps:1}},
-      {exerciseId:'tpd',sets:3,reps:12,weight:30,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:2.5,sets:0,reps:0}},
-    ]},
-    {name:'Pull A',color:'#ff6b35',notes:'Schiena, bicipiti',exercises:[
-      {exerciseId:'dl',sets:3,reps:5,weight:120,rest:240,rpe:'9',warmup:3,notes:'',increments:{weight:2.5,sets:0,reps:0}},
-      {exerciseId:'pullup',sets:4,reps:8,weight:0,rest:120,rpe:'8',warmup:0,notes:'',increments:{weight:0,sets:0,reps:1}},
-      {exerciseId:'seated',sets:3,reps:12,weight:60,rest:90,rpe:'',warmup:1,notes:'',increments:{weight:2.5,sets:0,reps:0}},
-      {exerciseId:'dc',sets:3,reps:12,weight:20,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:1.25,sets:0,reps:0}},
-    ]},
-    {name:'Leg Day',color:'#ff4757',notes:'Gambe e polpacci',exercises:[
-      {exerciseId:'sq',sets:5,reps:5,weight:100,rest:240,rpe:'8',warmup:3,notes:'Depth sotto parallelo',increments:{weight:2.5,sets:0,reps:0}},
-      {exerciseId:'lp',sets:3,reps:12,weight:150,rest:120,rpe:'',warmup:1,notes:'',increments:{weight:10,sets:0,reps:0}},
-      {exerciseId:'le',sets:3,reps:15,weight:50,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:5,sets:0,reps:0}},
-      {exerciseId:'lc',sets:3,reps:12,weight:40,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:2.5,sets:0,reps:0}},
-      {exerciseId:'gcal',sets:4,reps:20,weight:60,rest:60,rpe:'',warmup:0,notes:'',increments:{weight:5,sets:0,reps:0}},
-    ]},
+    // ── LUNEDÌ — UPPER + POTENZA ────────────────────────────────────────
+    {
+      name:'LUN — Upper + Potenza', color:'#e8ff47',
+      notes:'Petto · Schiena · Spalle · Potenza. Recuperi: multiarticolari pesanti 120–180s, carry 60–90s, isolamenti 45–60s.',
+      exercises:[
+        // Potenza
+        {exerciseId:'mbct',  exerciseType:'power',    sets:3,reps:4, weight:0, distance:0, duration:0, rest:75,  rpe:'',   warmup:0, notes:'Qualità del movimento, non cedimento. Recupero 60–90s.', increments:INC(0,0,0)},
+        // Multiarticolari
+        {exerciseId:'bp',    exerciseType:'strength', sets:4,reps:6, weight:60, distance:0, duration:0, rest:150, rpe:'8',  warmup:2, notes:'Progressione 6→7→8 rip. Raggiunto 8 con tecnica solida: +carico, riparte da 6.', increments:INC(2.5,0,1)},
+        {exerciseId:'pullup',exerciseType:'bodyweight',sets:4,reps:6, weight:0,  distance:0, duration:0, rest:150, rpe:'8',  warmup:0, notes:'Progressione 6→7→8 rip.', increments:INC(0,0,1)},
+        {exerciseId:'bpi',   exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
+        {exerciseId:'row',   exerciseType:'strength', sets:3,reps:6, weight:60, distance:0, duration:0, rest:120, rpe:'7.5',warmup:1, notes:'Progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
+        {exerciseId:'ohp',   exerciseType:'strength', sets:2,reps:6, weight:40, distance:0, duration:0, rest:105, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
+        // Isolamento
+        {exerciseId:'lr',    exerciseType:'strength', sets:2,reps:10,weight:10, distance:0, duration:0, rest:52,  rpe:'',   warmup:0, notes:'Progressione 10→12→15 rip.', increments:INC(0,0,1)},
+        // Carry
+        {exerciseId:'fw',    exerciseType:'carry',    sets:3,reps:0, weight:20, distance:30, duration:0, rest:75, rpe:'',   warmup:0, notes:"Farmer's walk — 30–40m per serie. Recupero 60–90s.", increments:INC(2.5,0,0)},
+      ]
+    },
+    // ── MARTEDÌ — LOWER + CORE ──────────────────────────────────────────
+    {
+      name:'MAR — Lower + Core', color:'#ff6b35',
+      notes:'Gambe · Core · Potenza. Squat multiarticolare pesante 120–180s recupero. Core 45–60s.',
+      exercises:[
+        // Potenza
+        {exerciseId:'boxjmp', exerciseType:'power',    sets:3,reps:3, weight:0,  distance:0, duration:0, rest:90,  rpe:'',  warmup:0, notes:'Box jump o vertical jump — qualità del salto, recupero 60–120s.', increments:INC(0,0,0)},
+        // Multiarticolari
+        {exerciseId:'sq',     exerciseType:'strength', sets:4,reps:6, weight:80, distance:0, duration:0, rest:150, rpe:'8', warmup:3, notes:'Progressione 6→7→8 rip. Se tecnica non consolidata: sostituire con leg press.', increments:INC(2.5,0,1)},
+        {exerciseId:'rdl',    exerciseType:'strength', sets:3,reps:6, weight:70, distance:0, duration:0, rest:150, rpe:'8', warmup:1, notes:'Romanian deadlift — progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
+        {exerciseId:'bss',    exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Bulgarian split squat — 6→7→8 rip per gamba.', increments:INC(1.25,0,1)},
+        // Complementari
+        {exerciseId:'lc',     exerciseType:'strength', sets:2,reps:8, weight:30, distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Leg curl — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
+        {exerciseId:'gcal',   exerciseType:'strength', sets:3,reps:8, weight:40, distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Calf raise — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
+        // Core
+        {exerciseId:'pallof', exerciseType:'strength', sets:3,reps:8, weight:10, distance:0, duration:0, rest:52,  rpe:'',  warmup:0, notes:'Pallof press — 8→10→12 rip per lato. Recupero 45–60s.', increments:INC(2.5,0,1)},
+        {exerciseId:'deadbug',exerciseType:'bodyweight',sets:2,reps:8, weight:0,  distance:0, duration:0, rest:52,  rpe:'',  warmup:0, notes:'Dead bug — 8→10 rip per lato. Recupero 45–60s.', increments:INC(0,0,1)},
+      ]
+    },
+    // ── GIOVEDÌ — UPPER + CONTROLLO ─────────────────────────────────────
+    {
+      name:'GIO — Upper + Controllo', color:'#1e90ff',
+      notes:'Spalle · Schiena · Petto · Complementari. Focus controllo e stabilità.',
+      exercises:[
+        // Potenza
+        {exerciseId:'mbrt',   exerciseType:'power',    sets:3,reps:4, weight:0,  distance:0, duration:0, rest:75,  rpe:'',   warmup:0, notes:'Medicine ball rotational throw — 4–6 per lato. Recupero 60–90s.', increments:INC(0,0,0)},
+        // Multiarticolari
+        {exerciseId:'ohp',    exerciseType:'strength', sets:3,reps:6, weight:40, distance:0, duration:0, rest:120, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
+        {exerciseId:'drow',   exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:90,  rpe:'7.5',warmup:0, notes:'Rematore manubrio — 6→7→8 rip per lato.', increments:INC(1.25,0,1)},
+        {exerciseId:'bpi',    exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Distensioni manubri inclinata — progressione 6→7→8.', increments:INC(1.25,0,1)},
+        // Complementari
+        {exerciseId:'lat',    exerciseType:'strength', sets:3,reps:8, weight:50, distance:0, duration:0, rest:90,  rpe:'',   warmup:0, notes:'Lat machine — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
+        {exerciseId:'pu0',    exerciseType:'bodyweight',sets:2,reps:6, weight:0,  distance:0, duration:0, rest:75,  rpe:'',   warmup:0, notes:'Push-up — progressione 6→7→8+. Recupero 60–90s.', increments:INC(0,0,1)},
+        {exerciseId:'facepull',exerciseType:'strength',sets:2,reps:8, weight:15, distance:0, duration:0, rest:60,  rpe:'',   warmup:0, notes:'Face pull — progressione 8→10→12 rip. Recupero 60s.', increments:INC(2.5,0,1)},
+        // Carry
+        {exerciseId:'sc2',    exerciseType:'carry',    sets:3,reps:0, weight:16, distance:20, duration:0, rest:75, rpe:'',   warmup:0, notes:'Suitcase carry — 20–30m per lato. Recupero 60–90s.', increments:INC(2,0,0)},
+      ]
+    },
+    // ── SABATO — LOWER + CONDITIONING ───────────────────────────────────
+    {
+      name:'SAB — Lower + Conditioning', color:'#ff4757',
+      notes:'Gambe · Hip hinge · Conditioning. Stacco pesante 150–180s recupero.',
+      exercises:[
+        // Potenza
+        {exerciseId:'brdjmp', exerciseType:'power',    sets:3,reps:3, weight:0,   distance:0, duration:0, rest:90,  rpe:'',  warmup:0, notes:'Broad jump — 3 salti per serie. Recupero 60–120s.', increments:INC(0,0,0)},
+        // Multiarticolari
+        {exerciseId:'dl',     exerciseType:'strength', sets:3,reps:6, weight:100, distance:0, duration:0, rest:165, rpe:'8', warmup:3, notes:'Stacco/trap-bar — progressione 6→7→8 rip. Se tecnica compromessa: usare 3×5–6.', increments:INC(2.5,0,1)},
+        {exerciseId:'fsq',    exerciseType:'strength', sets:3,reps:6, weight:60,  distance:0, duration:0, rest:135, rpe:'8', warmup:2, notes:'Front squat o goblet squat — progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
+        {exerciseId:'wlunge', exerciseType:'strength', sets:3,reps:6, weight:20,  distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Walking lunges — 6→7→8 rip per gamba.', increments:INC(1.25,0,1)},
+        // Complementari
+        {exerciseId:'ht',     exerciseType:'strength', sets:2,reps:8, weight:40,  distance:0, duration:0, rest:90,  rpe:'',  warmup:0, notes:'Hip thrust — progressione 8→10→12 rip.', increments:INC(5,0,1)},
+        {exerciseId:'gcal',   exerciseType:'strength', sets:2,reps:8, weight:30,  distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Calf raise — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
+        // Cardio / Conditioning
+        {exerciseId:'cardio', exerciseType:'cardio',   sets:1,reps:0, weight:0,   distance:0, duration:20, rest:0,  rpe:'',  warmup:0, notes:'Cardio moderato 20–30 min. Settimane 1–2: 20–25 min, settimane 3–4: 25–30 min, settimane 5–6: 30–40 min.', increments:INC(0,0,0)},
+      ]
+    },
   ];
     saveState();
   }
