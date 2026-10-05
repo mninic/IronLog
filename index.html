@@ -909,6 +909,21 @@ function nextRep(reps, progression, dir) {
   return progression[newIdx];
 }
 
+// I carichi si muovono SEMPRE a passi di 0,5 kg. Serve a due cose:
+//  1. i pulsanti +/− della progressione devono poter tornare esattamente a 0
+//     (con 0,5 di passo partendo da 1,25 si finiva su 0,8 → 0,3 → -0,2);
+//  2. i valori salvati (anche vecchi, es. 1,25 o 20,8) restano leggibili.
+const WEIGHT_STEP = 0.5;
+function snapWeight(v) {
+  var n = parseFloat(v);
+  if (!isFinite(n) || n <= 0) return 0;
+  return Math.round(n / WEIGHT_STEP) * WEIGHT_STEP;
+}
+// Formato senza zeri inutili: 50 e non 50.0
+function fmtWeight(v) {
+  return String(Math.round(snapWeight(v) * 100) / 100);
+}
+
 function buildRepSelector(inputId, reps, exId, onchangeExpr) {
   var progression = getRepProgression(exId);
   var snapped = snapToProgression(reps, progression);
@@ -1063,28 +1078,29 @@ function findTemplateExercise(exId) {
 // Dove trovare i valori attuali: template se presente, altrimenti ultima sessione
 function currentPrescription(exId) {
   var found = findTemplateExercise(exId);
-  if (found) return {found:found, cfg:found.cfg, weight:found.cfg.weight||0, sets:found.cfg.sets||0, reps:found.cfg.reps||0, rest:found.cfg.rest||0};
+  if (found) return {found:found, cfg:found.cfg, weight:snapWeight(found.cfg.weight), sets:found.cfg.sets||0, reps:found.cfg.reps||0, rest:found.cfg.rest||0};
   var log = exerciseLog(exId);
   var last = log.length ? log[log.length-1] : null;
-  return {found:null, cfg:null, weight:last?last.weight:0, sets:last?last.sets:0, reps:last?last.reps:0, rest:0};
+  return {found:null, cfg:null, weight:last?snapWeight(last.weight):0, sets:last?last.sets:0, reps:last?last.reps:0, rest:0};
 }
 
-// Passo di progressione: +carico, si riparte dal minimo della progressione
+// Passo di progressione: +carico, si riparte dal minimo della progressione.
+// Il salto resta sempre multiplo di 0,5 kg (vedi WEIGHT_STEP).
 function progressionPrescription(exId) {
   var p = currentPrescription(exId);
   var ladder = getRepProgression(exId);
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
-  var manualInc = p.cfg && p.cfg.increments && p.cfg.increments.weight ? p.cfg.increments.weight : 0;
-  var autoInc = p.weight>=100 ? 5 : (p.weight>=50 ? 2.5 : 1.25);
+  var manualInc = p.cfg && p.cfg.increments && p.cfg.increments.weight ? snapWeight(p.cfg.increments.weight) : 0;
+  var autoInc = snapWeight(p.weight>=100 ? 2.5 : 1);
   var step = manualInc>0 ? manualInc : autoInc;
   return {
-    weight: loaded ? round1(p.weight+step) : 0,
+    weight: loaded ? snapWeight(p.weight+step) : 0,
     sets: p.sets || 3,
     reps: ladder[0],
     rest: p.rest,
     step: step,
     loaded: loaded,
-    loadLabel: loaded ? '+'+step+'kg' : '+'+ladder[0]+' rip'
+    loadLabel: loaded ? '+'+fmtWeight(step)+'kg' : '+'+ladder[0]+' rip'
   };
 }
 
@@ -1097,7 +1113,7 @@ function deloadPrescription(exId) {
   var sets = Math.max(1, Math.round((p.sets||3)*DELOAD_SETS_PCT));
   var rest = p.rest ? Math.round(p.rest*DELOAD_REST_PCT) : 0;
   return {
-    weight: loaded ? round1(p.weight*DELOAD_LOAD_PCT) : 0,
+    weight: loaded ? snapWeight(p.weight*DELOAD_LOAD_PCT) : 0,
     sets: sets,
     reps: midRep,
     rest: rest,
@@ -1434,6 +1450,24 @@ function _applyState(p) {
   state.templates       = p.templates       || [];
   state.sessions        = p.sessions        || [];
   state.customExercises = p.customExercises || [];
+
+  // Migrazione: allinea tutti i delta di peso storici alla griglia da 0,5 kg.
+  // Prima un delta di 1,25 con i pulsanti +/- finiva su 0,8 -> 0,3 -> -0,2 e
+  // non tornava mai a 0 esatto.
+  function fixGrid(templates) {
+    (templates || []).forEach(function(t){
+      (t.exercises || []).forEach(function(e){
+        if (e && e.increments) e.increments.weight = snapWeight(e.increments.weight);
+        if (e && e.weight !== undefined) e.weight = snapWeight(e.weight);
+      });
+    });
+  }
+  fixGrid(state.templates);
+  (state.sessions || []).forEach(function(sn){
+    (sn.exercises || []).forEach(function(e){
+      if (e && e.config && e.config.increments) e.config.increments.weight = snapWeight(e.config.increments.weight);
+    });
+  });
   state.deletedBuiltins = p.deletedBuiltins || [];
   state.hiddenExercises = p.hiddenExercises || [];
   state.builtinOverrides= p.builtinOverrides|| {};
@@ -2162,7 +2196,7 @@ function selectExercise(exId) {
     var snappedReps = snapToProgression(rawReps, progression);
     var repCell = document.getElementById('cfg-reps-cell');
     repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
-    document.getElementById('cfg-weight').value = Math.max(0, Math.round((last.weight + (inc.weight||0)) * 10) / 10);
+    document.getElementById('cfg-weight').value = fmtWeight(last.weight + (inc.weight||0));
     document.getElementById('cfg-rest').value   = last.rest || 120;
     // Zero out progression and RPE so user sets them fresh for next session
     document.getElementById('cfg-rpe').value = '';
@@ -2212,11 +2246,11 @@ function cfgSummary(cfg) {
   var exType = cfg.exerciseType || getExerciseType(cfg.exerciseId);
   var sets = cfg.sets || 0, reps = cfg.reps || 0;
   if (exType === 'cardio') return (cfg.duration || 0) + ' min';
-  if (exType === 'timed')  return sets + '×' + (cfg.duration || 0) + 's' + (cfg.weight ? ' @ ' + cfg.weight + 'kg' : '');
-  if (exType === 'carry')  return sets + '×' + (cfg.distance || 0) + 'm @ ' + (cfg.weight || 0) + 'kg';
-  if (exType === 'power')  return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' · palla ' + (cfg.weight || 0) + 'kg' : ' · a corpo libero');
-  if (exType === 'bodyweight') return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' @ ' + (cfg.weight || 0) + 'kg zavorra' : ' · a corpo libero');
-  return sets + '×' + reps + ' @ ' + (cfg.weight || 0) + 'kg';
+  if (exType === 'timed')  return sets + '×' + (cfg.duration || 0) + 's' + (cfg.weight ? ' @ ' + fmtWeight(cfg.weight) + 'kg' : '');
+  if (exType === 'carry')  return sets + '×' + (cfg.distance || 0) + 'm @ ' + fmtWeight(cfg.weight) + 'kg';
+  if (exType === 'power')  return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' · palla ' + fmtWeight(cfg.weight) + 'kg' : ' · a corpo libero');
+  if (exType === 'bodyweight') return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' @ ' + fmtWeight(cfg.weight) + 'kg zavorra' : ' · a corpo libero');
+  return sets + '×' + reps + ' @ ' + fmtWeight(cfg.weight) + 'kg';
 }
 
 // Type badge labels and colors
@@ -2295,7 +2329,7 @@ function openExerciseConfig(exId, existing) {
   var repCell = document.getElementById('cfg-reps-cell');
   repCell.innerHTML = '<label class="input-label" id="cfg-reps-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
 
-  document.getElementById('cfg-weight').value   = existing ? (existing.weight||0)   : 0;
+  document.getElementById('cfg-weight').value   = existing ? fmtWeight(existing.weight) : 0;
   document.getElementById('cfg-rest').value     = existing ? (existing.rest||120)   : 120;
   document.getElementById('cfg-rpe').value      = existing ? (existing.rpe||'')     : '';
   document.getElementById('cfg-notes').value    = existing ? (existing.notes||'')   : '';
@@ -2304,7 +2338,9 @@ function openExerciseConfig(exId, existing) {
   if (document.getElementById('cfg-duration')) document.getElementById('cfg-duration').value = existing ? (existing.duration||20) : 20;
 
   warmupCount = existing ? (existing.warmup||0) : 0;
-  increments  = existing && existing.increments ? {weight:existing.increments.weight||0,sets:existing.increments.sets||0,reps:existing.increments.reps||0} : {weight:0,sets:0,reps:0};
+  increments  = existing && existing.increments
+    ? {weight:snapWeight(existing.increments.weight), sets:existing.increments.sets||0, reps:existing.increments.reps||0}
+    : {weight:0, sets:0, reps:0};
   // Extra-load flag: bodyweight/power can be zavvorati (trazioni, push-up, medicine ball)
   cfgAllowWeight = existing ? cfgAllowsWeight(existing) : getExerciseWeightedDefault(exId);
   document.querySelectorAll('#cfg-allowweight-chips .chip').forEach(function(c){
@@ -2340,6 +2376,9 @@ function changeIncrement(field, delta) {
     var targetReps = currentReps + increments.reps;
     var newTarget = nextRep(targetReps, progression, delta);
     increments.reps = newTarget - currentReps;
+  } else if (field === 'weight') {
+    // Tieni il delta sempre sulla griglia da 0,5 kg, così si torna a 0 esatto
+    increments.weight = snapWeight(increments.weight + delta);
   } else {
     increments[field] = Math.round((increments[field]+delta)*10)/10;
   }
@@ -2347,12 +2386,19 @@ function changeIncrement(field, delta) {
 }
 
 function updateIncrementDisplay() {
-  ['weight','sets'].forEach(function(f){
-    var el = document.getElementById('inc-'+f+'-val');
-    var v = increments[f];
-    el.textContent = (v>0?'+':'')+v;
-    el.className = 'inc-value '+(v>0?'pos':v<0?'neg':'zero');
-  });
+  // Peso: formattato sulla griglia da 0,5 (niente "1.5000000000000002")
+  var wEl = document.getElementById('inc-weight-val');
+  var wv = increments.weight;
+  if (wEl){
+    wEl.textContent = (wv>0?'+':'')+fmtWeight(wv);
+    wEl.className = 'inc-value '+(wv>0?'pos':wv<0?'neg':'zero');
+  }
+  var sEl = document.getElementById('inc-sets-val');
+  if (sEl){
+    var sv = increments.sets;
+    sEl.textContent = (sv>0?'+':'')+sv;
+    sEl.className = 'inc-value '+(sv>0?'pos':sv<0?'neg':'zero');
+  }
   // Reps: show absolute target value with progression steps
   var progression = getRepProgression(pendingExerciseId);
   var currentReps = parseInt(document.getElementById('cfg-reps') ? document.getElementById('cfg-reps').value : progression[0]) || progression[0];
@@ -2381,7 +2427,7 @@ function saveExerciseConfig() {
     allowWeight:  cfgAllowWeight,
     sets:     parseInt(document.getElementById('cfg-sets').value)||3,
     reps:     parseInt(document.getElementById('cfg-reps')    ? document.getElementById('cfg-reps').value    : 0)||0,
-    weight:   parseFloat(document.getElementById('cfg-weight') ? document.getElementById('cfg-weight').value : 0)||0,
+    weight:   snapWeight(document.getElementById('cfg-weight') ? document.getElementById('cfg-weight').value : 0),
     distance: distEl ? (parseFloat(distEl.value)||30) : 0,
     duration: durEl  ? (parseFloat(durEl.value)||20)  : 0,
     rest:     parseInt(document.getElementById('cfg-rest').value)||120,
@@ -2529,7 +2575,7 @@ function buildSessionExercise(cfg) {
     var last = getLastSessionDataForExercise(cfg.exerciseId);
     if (last) {
       var inc = last.increments || {weight:0,sets:0,reps:0};
-      if (effectiveCfg.allowWeight) effectiveCfg.weight = Math.max(0, Math.round((last.weight+(inc.weight||0))*10)/10);
+      if (effectiveCfg.allowWeight) effectiveCfg.weight = snapWeight(last.weight+(inc.weight||0));
       effectiveCfg.reps = Math.max(1, last.reps+(inc.reps||0));
       effectiveCfg.sets = cfg.sets;
       effectiveCfg.rest = cfg.rest || 120;
@@ -2614,7 +2660,7 @@ function renderSessionExercises() {
   document.getElementById('session-exercises').innerHTML = state.activeSession.exercises.map(function(ex,exIdx){
     var inc = ex.config.increments||{weight:0,sets:0,reps:0};
     var nextParts = [];
-    if (inc.weight) nextParts.push('<span class="'+(inc.weight>0?'nd-up':'nd-dn')+'">'+(inc.weight>0?'+':'')+inc.weight+'kg</span>');
+    if (inc.weight) nextParts.push('<span class="'+(inc.weight>0?'nd-up':'nd-dn')+'">'+(inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg</span>');
     if (inc.sets) nextParts.push('<span class="'+(inc.sets>0?'nd-up':'nd-dn')+'">'+(inc.sets>0?'+':'')+inc.sets+' serie</span>');
     if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
     var wuCount = ex.config.warmup||0;
@@ -2651,13 +2697,13 @@ function renderSessionExercises() {
                '<input type="number" class="set-inp" value="'+(set.reps||0)+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()">';
       } else if (colTemplate==='carry') {
         inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
-               '<input type="number" class="set-inp" value="'+(set.distance||30)+'" step="5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'distance\',this.value)" onfocus="this.select()">';
+               '<input type="number" class="set-inp" value="'+(set.distance||30)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'distance\',this.value)" onfocus="this.select()">';
       } else if (colTemplate==='cardio') {
-        inputs='<input type="number" class="set-inp" value="'+(set.duration||20)+'" step="1" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()" style="grid-column:span 2">'+
+        inputs='<input type="number" class="set-inp" value="'+(set.duration||20)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()" style="grid-column:span 2">'+
                '<span></span>';
       } else if (colTemplate==='timed') {
         inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
-               '<input type="number" class="set-inp" value="'+(set.duration||30)+'" step="5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()">';
+               '<input type="number" class="set-inp" value="'+(set.duration||30)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()">';
       } else { // repsonly
         inputs='<input type="number" class="set-inp" value="'+(set.reps||4)+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()" style="grid-column:span 2">';
       }
@@ -2777,7 +2823,7 @@ function openSessionIncrement(exIdx) {
   siExIdx = exIdx;
   var ex = state.activeSession.exercises[exIdx];
   var inc = ex.config.increments||{weight:0,sets:0,reps:0};
-  siIncrements = {weight:inc.weight||0,sets:inc.sets||0,reps:inc.reps||0};
+  siIncrements = {weight:snapWeight(inc.weight),sets:inc.sets||0,reps:inc.reps||0};
   document.getElementById('si-title').textContent = (ex.ex?ex.ex.name:'Esercizio')+' — Progressione';
   updateSIDisplay();
   openModal('modal-session-increment');
@@ -2793,6 +2839,9 @@ function changeSI(field,delta) {
     var targetReps = currentReps + siIncrements.reps;
     var newTarget = nextRep(targetReps, progression, delta);
     siIncrements.reps = newTarget - currentReps;
+  } else if (field === 'weight') {
+    // Tieni il delta sempre sulla griglia da 0,5 kg, così si torna a 0 esatto
+    siIncrements.weight = snapWeight(siIncrements.weight + delta);
   } else {
     siIncrements[field] = Math.round((siIncrements[field]+delta)*10)/10;
   }
@@ -2808,11 +2857,18 @@ function getCurrentSIReps(ex, progression) {
 }
 
 function updateSIDisplay() {
-  ['weight','sets'].forEach(function(f){
-    var el=document.getElementById('si-'+f+'-val'), v=siIncrements[f];
-    el.textContent=(v>0?'+':'')+v;
-    el.className='inc-value '+(v>0?'pos':v<0?'neg':'zero');
-  });
+  var wEl=document.getElementById('si-weight-val');
+  if (wEl){
+    var wv=siIncrements.weight;
+    wEl.textContent=(wv>0?'+':'')+fmtWeight(wv);
+    wEl.className='inc-value '+(wv>0?'pos':wv<0?'neg':'zero');
+  }
+  var sEl=document.getElementById('si-sets-val');
+  if (sEl){
+    var sv=siIncrements.sets;
+    sEl.textContent=(sv>0?'+':'')+sv;
+    sEl.className='inc-value '+(sv>0?'pos':sv<0?'neg':'zero');
+  }
   // Reps: show target with step info
   var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
   var exId = ex && ex.config ? ex.config.exerciseId : null;
@@ -2973,7 +3029,7 @@ function confirmFinishSession() {
       if (workSets.length) {
         var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
         var lastSet = workSets[workSets.length-1];
-        cfg.weight = Math.max(0, Math.round((maxW + (inc.weight||0)) * 10) / 10);
+        cfg.weight = snapWeight(maxW + (inc.weight||0));
         cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
         cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
         cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
@@ -3083,7 +3139,7 @@ function showSessionDetail(idx) {
       var ex=findExercise(e.exerciseId);if(!ex)return'';
       var inc = getInc(e.exerciseId, e.increments);
       var incParts = [];
-      if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+inc.weight+'kg peso');
+      if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg peso');
       if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
       if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
       var incHtml = incParts.length
@@ -3327,6 +3383,7 @@ function renderRetroExerciseList() {
     var ex = findExercise(re.exerciseId);
     var name = ex ? (ex.name) : re.exerciseId;
     var inc = re.increments || {weight:0,sets:0,reps:0};
+    inc.weight = snapWeight(inc.weight);
 
     var setsHtml = re.sets.map(function(s, si) {
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
@@ -3346,6 +3403,7 @@ function renderRetroExerciseList() {
     }
     function incLabel(v) { return (v>0?'+':'')+v; }
     function incClass(v) { return v>0?'color:var(--green)':v<0?'color:var(--red)':'color:var(--text3)'; }
+    function incLabelKg(v) { return (v>0?'+':'')+fmtWeight(v); }
 
     var incHtml =
       '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'+
@@ -3355,7 +3413,7 @@ function renderRetroExerciseList() {
         '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',-0.5)">−</button>'+
           '<div style="text-align:center;min-width:36px">'+
-            '<div style="font-size:14px;font-weight:900;'+incClass(inc.weight)+'">'+incLabel(inc.weight)+'</div>'+
+            '<div style="font-size:14px;font-weight:900;'+incClass(inc.weight)+'">'+incLabelKg(inc.weight)+'</div>'+
             '<div style="font-size:9px;color:var(--text3)">kg</div>'+
           '</div>'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',0.5)">+</button>'+
@@ -3435,6 +3493,8 @@ function updateRetroIncrement(exIdx, field, delta) {
     var targetReps = snapToProgression(currentReps + inc.reps, progression);
     var newTarget = nextRep(targetReps, progression, delta);
     inc.reps = newTarget - currentReps;
+  } else if (field === 'weight') {
+    inc.weight = snapWeight(inc.weight + delta);
   } else {
     inc[field] = Math.round((inc[field] + delta) * 10) / 10;
   }
@@ -3572,9 +3632,9 @@ function defaultProgramTemplates() {
       // Multiarticolari
       {exerciseId:'bp',    exerciseType:'strength', sets:4,reps:6, weight:60, distance:0, duration:0, rest:150, rpe:'8',  warmup:2, notes:'Panca piana bilanciere — progressione 6→7→8 rip. Raggiunto 8 con tecnica solida: +carico, riparte da 6.', increments:INC(2.5,0,1)},
       {exerciseId:'pullup',exerciseType:'bodyweight',allowWeight:true, sets:4,reps:6, weight:0, distance:0, duration:0, rest:150, rpe:'8',  warmup:0, notes:'Trazioni — progressione 6→7→8 rip. Flag "carico aggiuntivo" per le zavorre.', increments:INC(2.5,0,1)},
-      {exerciseId:'bpi',   exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Distensioni manubri inclinata — progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
+      {exerciseId:'bpi',   exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Distensioni manubri inclinata — progressione 6→7→8 rip.', increments:INC(0.5,0,1)},
       {exerciseId:'row',   exerciseType:'strength', sets:3,reps:6, weight:60, distance:0, duration:0, rest:120, rpe:'7.5',warmup:1, notes:'Rematore bilanciere — progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
-      {exerciseId:'ohp',   exerciseType:'strength', sets:2,reps:6, weight:40, distance:0, duration:0, rest:105, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
+      {exerciseId:'ohp',   exerciseType:'strength', sets:2,reps:6, weight:40, distance:0, duration:0, rest:105, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(0.5,0,1)},
       // Isolamento
       {exerciseId:'lr',    exerciseType:'strength', sets:2,reps:10,weight:10,distance:0, duration:0, rest:52,  rpe:'',   warmup:0, notes:'Alzate laterali — progressione 10→12→15 rip. Recupero 45–60s.', increments:INC(0,0,1)},
       // Carry
@@ -3591,7 +3651,7 @@ function defaultProgramTemplates() {
       // Multiarticolari
       {exerciseId:'sq',     exerciseType:'strength', sets:4,reps:6, weight:80, distance:0, duration:0, rest:150, rpe:'8', warmup:3, notes:'Squat — progressione 6→7→8 rip. Se tecnica non consolidata: sostituire con leg press.', increments:INC(2.5,0,1)},
       {exerciseId:'rdl',    exerciseType:'strength', sets:3,reps:6, weight:70, distance:0, duration:0, rest:150, rpe:'8', warmup:1, notes:'Romanian deadlift — progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
-      {exerciseId:'bss',    exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Bulgarian split squat — 6→7→8 rip per gamba.', increments:INC(1.25,0,1)},
+      {exerciseId:'bss',    exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Bulgarian split squat — 6→7→8 rip per gamba.', increments:INC(0.5,0,1)},
       // Complementari
       {exerciseId:'lc',     exerciseType:'strength', sets:2,reps:8, weight:30, distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Leg curl — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
       {exerciseId:'gcal',   exerciseType:'strength', sets:3,reps:8, weight:40, distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Calf raise — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
@@ -3608,9 +3668,9 @@ function defaultProgramTemplates() {
       // Potenza — 3×4–6 per lato
       {exerciseId:'mbrt',   exerciseType:'power',    allowWeight:true, sets:3,reps:4, weight:0, distance:0, duration:0, rest:75, rpe:'', warmup:0, notes:'3×4–6 per lato. Qualità del movimento. Recupero 60–90s.', increments:INC(0,0,0)},
       // Multiarticolari
-      {exerciseId:'ohp',    exerciseType:'strength', sets:3,reps:6, weight:40, distance:0, duration:0, rest:120, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(1.25,0,1)},
-      {exerciseId:'drow',   exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:90,  rpe:'7.5',warmup:0, notes:'Rematore manubrio — 6→7→8 rip per lato.', increments:INC(1.25,0,1)},
-      {exerciseId:'bpi',    exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Distensioni manubri inclinata — progressione 6→7→8.', increments:INC(1.25,0,1)},
+      {exerciseId:'ohp',    exerciseType:'strength', sets:3,reps:6, weight:40, distance:0, duration:0, rest:120, rpe:'8',  warmup:1, notes:'Military press — progressione 6→7→8 rip.', increments:INC(0.5,0,1)},
+      {exerciseId:'drow',   exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:90,  rpe:'7.5',warmup:0, notes:'Rematore manubrio — 6→7→8 rip per lato.', increments:INC(0.5,0,1)},
+      {exerciseId:'bpi',    exerciseType:'strength', sets:3,reps:6, weight:50, distance:0, duration:0, rest:105, rpe:'7.5',warmup:1, notes:'Distensioni manubri inclinata — progressione 6→7→8.', increments:INC(0.5,0,1)},
       // Complementari
       {exerciseId:'lat',    exerciseType:'strength', sets:3,reps:8, weight:50, distance:0, duration:0, rest:90,  rpe:'',  warmup:0, notes:'Lat machine — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
       {exerciseId:'pu0',    exerciseType:'bodyweight',allowWeight:true, sets:2,reps:6, weight:0, distance:0, duration:0, rest:75, rpe:'', warmup:0, notes:'Push-up — progressione 6→7→8+. Recupero 60–90s. Flag "carico aggiuntivo" per le zavorre.', increments:INC(2.5,0,1)},
@@ -3629,7 +3689,7 @@ function defaultProgramTemplates() {
       // Multiarticolari
       {exerciseId:'dl',     exerciseType:'strength', sets:3,reps:6, weight:100,distance:0, duration:0, rest:165, rpe:'8', warmup:3, notes:'Stacco da terra / trap-bar — progressione 6→7→8 rip. Se 6–8 rip compromettono la tecnica: usare 3×5–6.', increments:INC(2.5,0,1)},
       {exerciseId:'fsq',    exerciseType:'strength', sets:3,reps:6, weight:60, distance:0, duration:0, rest:135, rpe:'8', warmup:2, notes:'Front squat o goblet squat — progressione 6→7→8 rip.', increments:INC(2.5,0,1)},
-      {exerciseId:'wlunge', exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Walking lunges — 6→7→8 rip per gamba.', increments:INC(1.25,0,1)},
+      {exerciseId:'wlunge', exerciseType:'strength', sets:3,reps:6, weight:20, distance:0, duration:0, rest:105, rpe:'8', warmup:0, notes:'Walking lunges — 6→7→8 rip per gamba.', increments:INC(0.5,0,1)},
       // Complementari
       {exerciseId:'ht',     exerciseType:'strength', sets:2,reps:8, weight:40, distance:0, duration:0, rest:90,  rpe:'',  warmup:0, notes:'Hip thrust — progressione 8→10→12 rip.', increments:INC(5,0,1)},
       {exerciseId:'gcal',   exerciseType:'strength', sets:2,reps:8, weight:30, distance:0, duration:0, rest:75,  rpe:'',  warmup:0, notes:'Calf raise — progressione 8→10→12 rip.', increments:INC(2.5,0,1)},
