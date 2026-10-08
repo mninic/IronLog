@@ -331,6 +331,11 @@ select.input{appearance:none}
     <button class="btn btn-ghost btn-full" onclick="document.getElementById('import-file-input').click()">⬆️ Importa JSON</button>
     <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importData(event)">
   </div>
+  <div class="card">
+    <div class="card-title">ℹ️ App e diagnostica</div>
+    <div style="font-size:13px;color:var(--text2);line-height:1.8" id="app-diag">…</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:8px">IronLog v<span id="app-version">…</span></div>
+  </div>
   <div style="height:20px"></div>
 </div>
 
@@ -3515,7 +3520,36 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
+var APP_VERSION = '4.3.2';
+function renderAppDiag() {
+  var el = document.getElementById('app-diag');
+  var verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = APP_VERSION;
+  if (!el) return;
+  try {
+    var vv = window.visualViewport;
+    var locked = getComputedStyle(document.documentElement).getPropertyValue('--app-height').trim() || '?';
+    var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ? 'PWA installata' : 'browser';
+    var nav = document.querySelector('.navbar');
+    var gap = '?';
+    if (nav) {
+      var r = nav.getBoundingClientRect();
+      var base = (vv && vv.height) ? vv.height : window.innerHeight;
+      gap = Math.round(base - r.bottom) + 'px';
+    }
+    el.innerHTML =
+      'Modalità: <b style="color:var(--text)">' + standalone + '</b><br>' +
+      'Finestra: ' + window.innerWidth + '×' + window.innerHeight +
+      (vv ? ' · visibile: ' + Math.round(vv.width) + '×' + Math.round(vv.height) : ' · visualViewport n/d') + '<br>' +
+      'Altezza app bloccata: <b style="color:var(--text)">' + locked + '</b><br>' +
+      'Spazio sotto navbar: <b style="color:var(--text)">' + gap + '</b>' +
+      ' (deve essere 0 o pochi px)<br>' +
+      'DPR: ' + (window.devicePixelRatio || '?') +
+      ' · UA: ' + (navigator.userAgent || '').slice(0, 60) + '…';
+  } catch (e) { el.textContent = 'n/d'; }
+}
 function renderProfilo() {
+  renderAppDiag();
   document.getElementById('profile-name').value=state.profile.name||'Atleta';
   var accEl = document.getElementById('profilo-account-info');
   if (accEl && currentUser) accEl.textContent = '✅ Connesso come ' + currentUser.email;
@@ -4394,7 +4428,9 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
   }
 
   function lockHeight() {
-    lockedHeight = Math.round(measureHeight());
+    var h = Math.round(measureHeight());
+    if (h === lockedHeight) return; // niente layout se non cambia: lo scroll spara spesso
+    lockedHeight = h;
     document.documentElement.style.setProperty('--app-height', lockedHeight + 'px');
   }
 
@@ -4447,6 +4483,16 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) relockSoon(50);
   });
+  // Le toolbar di Chrome/Safari iOS compaiono e scompaiono con lo scroll SENZA
+  // generare alcun evento (ne' resize, ne' visualViewport, ne' pageshow): e'
+  // proprio lo scroll a cambiare l'altezza utile, quindi rimisuriamo qui.
+  // Passive + capture: intercetta gli scroll delle .page senza bloccarli.
+  var scrollTick = false;
+  document.addEventListener('scroll', function() {
+    if (scrollTick) return;
+    scrollTick = true;
+    setTimeout(function(){ scrollTick = false; if (!keyboardOpen) lockHeight(); }, 150);
+  }, { capture: true, passive: true });
 })();
 
 // ============================================================
