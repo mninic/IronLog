@@ -1782,11 +1782,18 @@ function _restoreActiveSession() {
         restEndTime = p.restEndTime;
         restSecondsMax = p.restSecondsMax;
         var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
-        if (remaining > 0) { restSecondsLeft = remaining; _scheduleRestTimer(); }
+        if (remaining > 0) {
+          restSecondsLeft = remaining;
+          _scheduleRestTimer();
+          // ri-arma il push server: la subscription e' persistita dal
+          // browser, ma il job l'aveva cancellato lo skip/la chiusura
+          pushScheduleRest();
+        }
         else {
           // recupero scaduto ad app chiusa: avvisa subito alla riapertura
           restEndTime = null;
           saveState();
+          pushCancelRest(); // niente doppia notifica dal server
           showToast('Recupero terminato! 💪');
           notifyRestDone();
         }
@@ -3095,12 +3102,101 @@ function ensureNotificationPermission() {
   if (Notification.permission === 'denied') return false;
   // 'default': siamo dentro un gesto utente, e' il momento giusto per chiedere.
   // Il risultato arriva via callback, qui ci basta sapere che non e' bloccato.
-  function onGrant(res){ if (res === 'granted') showToast('Notifiche recupero attivate'); }
+  function onGrant(res){
+    if (res !== 'granted') return;
+    showToast('Notifiche recupero attivate');
+    // il permesso e' arrivato adesso: subscribe + job push col riposo in corso
+    if (restEndTime) pushScheduleRest();
+  }
   try {
     var p = Notification.requestPermission(onGrant);
     if (p && p.then) p.then(onGrant);
   } catch (e) {}
   return true;
+}
+
+// Notifica di fine riposo via SERVER (Web Push) — l'unico modo che funziona
+// con il telefono bloccato: li' la pagina JS e' sospesa e i timer non
+// scattano, ma il push arriva comunque via FCM/APNs.
+// Flusso: qui iscriviamo il dispositivo e programminiamo un job con
+// l'orario esatto di fine riposo; pg_cron (server) lo spedisce alla
+// scadenza. Funziona anche con l'app chiusa.
+// Richiede: permesso notifiche + app installata come PWA su iOS 16.4+.
+const PUSH_FN = 'push'; // Edge Function Supabase
+const VAPID_PUBLIC_KEY = 'BAR7Zkow4rT1O3IGn7KBVB0AQ2fLkHTZ3urO-K7uyFTYZp45VadCNFW6hf8ECcq-VS7r404yG2r_yPif5s8If0Q';
+let pushEndpoint = null; // endpoint di questo dispositivo, dopo subscribe
+
+function _urlBase64ToUint8Array(base64String) {
+  var padding = '='.repeat((4 - base64String.length % 4) % 4);
+  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var rawData = atob(base64);
+  return Uint8Array.from(rawData, function(c){ return c.charCodeAt(0); });
+}
+
+// Registra/aggiorna la subscription sul server. Idempotente.
+async function pushEnsureSubscription() {
+  if (pushEndpoint) return pushEndpoint;
+  if (!supa || !('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return null;
+  try {
+    var reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return null;
+    var sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+    var j = sub.toJSON();
+    var { error } = await supa.functions.invoke(PUSH_FN, {
+      body: { action: 'subscribe', endpoint: j.endpoint, keys: j.keys }
+    });
+    if (error) return null;
+    pushEndpoint = j.endpoint;
+    return pushEndpoint;
+  } catch (e) { return null; }
+}
+
+// Programma il push a fine riposo. Chiamato a ogni avvio riposo.
+async function pushScheduleRest() {
+  if (!restEndTime) return;
+  var ep = await pushEnsureSubscription();
+  if (!ep) return;
+  try {
+    await supa.functions.invoke(PUSH_FN, {
+      body: {
+        action: 'schedule',
+        endpoint: ep,
+        fire_at: new Date(restEndTime).toISOString(),
+        payload: {
+          title: 'IronLog — Recupero terminato!',
+          body: 'Pronto per la prossima serie 💪',
+          tag: 'ironlog-rest'
+        }
+      }
+    });
+  } catch (e) {} // offline o errore server: la notifica locale resta comunque
+}
+
+// Annulla il job (riposo saltato, sessione finita, riposo giu' scaduto
+// localmente). Best effort: se il server ha gia' spedito, lo stesso tag
+// 'ironlog-rest' sostituisce la notifica invece di duplicarla.
+function pushCancelRest() {
+  if (!supa) return;
+  if (pushEndpoint) {
+    try {
+      supa.functions.invoke(PUSH_FN, { body: { action: 'cancel', endpoint: pushEndpoint } });
+    } catch (e) {}
+    return;
+  }
+  // a boot l'endpoint non e' ancora noto: risolvilo, poi cancella
+  pushEnsureSubscription().then(function(ep) {
+    if (!ep) return;
+    try {
+      supa.functions.invoke(PUSH_FN, { body: { action: 'cancel', endpoint: ep } });
+    } catch (e) {}
+  });
 }
 
 // Notifica di fine recupero. Prima si prova il service worker, poi si
@@ -3139,6 +3235,8 @@ function startRestTimer(seconds) {
   _scheduleRestTimer();
   // Primo recupero della sessione: chiedi il permesso di notificare
   ensureNotificationPermission();
+  // Push server: scatta anche con telefono bloccato/app chiusa
+  pushScheduleRest();
 }
 
 function _scheduleRestTimer() {
@@ -3151,6 +3249,7 @@ function _scheduleRestTimer() {
       restTimerInterval = null;
       restEndTime = null;
       saveState();
+      pushCancelRest(); // scaduto localmente: il server non deve ridirelo
       var bar = document.getElementById('rest-timer-bar');
       if (bar) bar.style.display = 'none';
       showToast('Recupero terminato! 💪');
@@ -3182,6 +3281,7 @@ function skipRest() {
   restTimerInterval = null;
   restEndTime = null;
   saveState();
+  pushCancelRest();
   var bar = document.getElementById('rest-timer-bar');
   if (bar) bar.style.display='none';
 }
