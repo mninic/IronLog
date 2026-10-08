@@ -34,7 +34,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .page::-webkit-scrollbar{display:none}
 .page{display:none}.page.active{display:block}
 
-.navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:8px 0 calc(8px + var(--safe-bot));display:flex;z-index:1000}
+.navbar{flex:none;background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);padding:8px 0 calc(8px + var(--safe-bot));display:flex}
 .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;cursor:pointer;transition:all 0.2s}
 .nav-icon{font-size:22px;transition:transform 0.2s}
 .nav-label{font-size:9px;color:var(--text3);font-weight:600;letter-spacing:0.3px;transition:color 0.2s}
@@ -4384,18 +4384,29 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
   var lockedHeight = 0;
   var keyboardOpen = false;
 
+  function measureHeight() {
+    // visualViewport e' l'altezza VERA visibile: su iOS segue le toolbar di
+    // Safari che compaiono/scompaiono (innerHeight invece resta fermo e non
+    // genera nemmeno un resize). Senza, l'app resta piu' corta dello schermo
+    // e sotto resta una banda vuota.
+    if (window.visualViewport && window.visualViewport.height) return window.visualViewport.height;
+    return window.innerHeight;
+  }
+
   function lockHeight() {
-    // Always use window.innerHeight at load — before any keyboard interaction
-    // visualViewport can already be shrunk if called late, so we prefer innerHeight here
-    lockedHeight = window.innerHeight;
+    lockedHeight = Math.round(measureHeight());
     document.documentElement.style.setProperty('--app-height', lockedHeight + 'px');
+  }
+
+  function relockSoon(ms) {
+    setTimeout(function(){ if (!keyboardOpen) lockHeight(); }, ms);
   }
 
   // Capture once at load, before any keyboard
   lockHeight();
   // Also capture on orientationchange (screen rotated, no keyboard)
   window.addEventListener('orientationchange', function() {
-    setTimeout(lockHeight, 300);
+    relockSoon(300);
   });
 
   // Track keyboard state via focus/blur on inputs
@@ -4410,26 +4421,31 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
       keyboardOpen = false;
       // Re-lock after keyboard animates away (~300ms)
-      setTimeout(lockHeight, 350);
+      relockSoon(350);
     }
   }, true);
 
   // On resize: only update if keyboard is confirmed closed
   window.addEventListener('resize', function() {
-    if (!keyboardOpen) {
-      setTimeout(lockHeight, 50);
-    }
+    relockSoon(50);
   });
+  // visualViewport cambia anche quando window sta fermo (toolbar iOS,
+  // rotazione, split view): e' la sorgente piu' affidabile.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function() {
+      relockSoon(50);
+    });
+  }
 
   // Rimisura quando la pagina torna in primo piano: in PWA standalone e con
   // le barre del browser che compaiono/scompaiono l'altezza utile cambia tra
   // un avvio e l'altro, e il valore bloccato al primo load resterebbe corto
   // (banda nera in fondo) o lungo. Mai con la tastiera aperta.
   window.addEventListener('pageshow', function() {
-    if (!keyboardOpen) setTimeout(lockHeight, 50);
+    relockSoon(50);
   });
   document.addEventListener('visibilitychange', function() {
-    if (!document.hidden && !keyboardOpen) setTimeout(lockHeight, 50);
+    if (!document.hidden) relockSoon(50);
   });
 })();
 
