@@ -596,6 +596,14 @@ select.input{appearance:none}
           <button class="inc-btn" onclick="changeIncrement('reps',1)">+</button>
         </div>
       </div>
+      <div class="increment-row" id="inc-distance-row" style="display:none">
+        <div class="increment-label">Distanza (m)</div>
+        <div class="increment-btns">
+          <button class="inc-btn" onclick="changeIncrement('distance',-5)">−</button>
+          <div class="inc-value zero" id="inc-distance-val">0</div>
+          <button class="inc-btn" onclick="changeIncrement('distance',5)">+</button>
+        </div>
+      </div>
     </div>
     <div class="divider"></div>
     <div class="input-group">
@@ -756,7 +764,7 @@ select.input{appearance:none}
         </div>
       </div>
       <div class="increment-row">
-        <div class="increment-label">Ripetizioni</div>
+        <div class="increment-label" id="si-reps-label">Ripetizioni</div>
         <div class="increment-btns" id="si-reps-row">
           <button class="inc-btn" onclick="changeSI('reps',-1)">−</button>
           <div class="inc-value zero" id="si-reps-val">0</div>
@@ -869,6 +877,15 @@ const REP_PROGRESSIONS = {
 };
 const DEFAULT_REP_PROGRESSION = [8, 10, 12];
 
+// I carry si progressano in METRI e in peso, non in ripetizioni.
+// Esempi dal programma: Farmer's walk 3×30–40m, Suitcase carry 20–30m per lato.
+const CARRY_DISTANCE_PROGRESSIONS = {
+  fw:  [30, 35, 40],
+  sc2: [20, 25, 30],
+};
+const DEFAULT_CARRY_DISTANCE_PROGRESSION = [20, 30, 40];
+const CARRY_DEFAULT_DIST_STEP = 5;
+
 // Per-exercise overrides — these win over the category default.
 // A single entry means the rep count is fixed (both selector buttons disabled).
 const EXERCISE_REP_PROGRESSIONS = {
@@ -883,10 +900,18 @@ const EXERCISE_REP_PROGRESSIONS = {
   pallof:  [8, 10, 12], // Pallof press                    3×8–10–12/lato
 };
 
+function getCarryProgression(exId) {
+  if (exId && CARRY_DISTANCE_PROGRESSIONS[exId]) return CARRY_DISTANCE_PROGRESSIONS[exId];
+  return DEFAULT_CARRY_DISTANCE_PROGRESSION;
+}
+
+// Ladder "giusta" per l'esercizio: METRI per i carry, ripetizioni per tutto il resto.
+// Tutti i call site (progressione in sessione, retro, advisor) passano da qui.
 function getRepProgression(exId) {
   if (exId && EXERCISE_REP_PROGRESSIONS[exId]) return EXERCISE_REP_PROGRESSIONS[exId];
   var ex = exId ? allExercises().find(function(e){ return e.id === exId; }) : null;
   if (!ex) return DEFAULT_REP_PROGRESSION;
+  if (ex.exerciseType === 'carry') return getCarryProgression(exId);
   return REP_PROGRESSIONS[ex.category] || DEFAULT_REP_PROGRESSION;
 }
 
@@ -924,6 +949,22 @@ function fmtWeight(v) {
   return String(Math.round(snapWeight(v) * 100) / 100);
 }
 
+// I carry progressano anche in distanza, quindi un incremento puo' avere 'distance'.
+// I dati vecchi non ce l'hanno: fallback a 0 ovunque.
+function normInc(inc) {
+  inc = inc || {};
+  return {weight:snapWeight(inc.weight), sets:inc.sets||0, reps:inc.reps||0, distance:inc.distance||0};
+}
+function hasInc(inc) {
+  return !!(inc && (inc.weight || inc.sets || inc.reps || inc.distance));
+}
+
+// Etichetta del selettore ripetizioni: per i carry la ladder e' in metri
+function repCellLabel(exId) {
+  return getExerciseType(exId)==='carry'
+    ? 'Distanza (m)'
+    : 'Rip. ('+getRepProgression(exId).join('→')+')';
+}
 function buildRepSelector(inputId, reps, exId, onchangeExpr) {
   var progression = getRepProgression(exId);
   var snapped = snapToProgression(reps, progression);
@@ -959,18 +1000,26 @@ function exerciseLog(exId) {
     var entry = null;
     (s.exercises||[]).forEach(function(e){ if (e.exerciseId===exId) entry = e; });
     if (!entry || !(entry.sets||[]).length) return;
-    var best = null, rpes = [], anyRep = false;
+    // I carry si misurano in METRI, tutto il resto in ripetizioni.
+    // unit vuoto = rip; 'm' = metri.
+    var isCarry = getExerciseType(exId) === 'carry';
+    var unit = isCarry ? 'm' : '';
+    var best = null, rpes = [], anyVal = false;
     entry.sets.forEach(function(st){
-      if (st.reps>0) anyRep = true;
-      if (st.reps>0 && (!best || st.reps>best.reps || (st.reps===best.reps && (st.weight||0)>best.weight))) {
-        best = {reps:st.reps, weight:st.weight||0, rpe:parseFloat(st.rpe)||null};
+      var v = isCarry ? (st.distance||0) : (st.reps||0);
+      if (v>0) anyVal = true;
+      if (v>0 && (!best || v>best.val || (v===best.val && (st.weight||0)>best.weight))) {
+        best = {val:v, reps:st.reps||0, distance:st.distance||0, weight:st.weight||0, rpe:parseFloat(st.rpe)||null};
       }
       if (st.rpe!=null && st.rpe!=='') rpes.push(parseFloat(st.rpe));
     });
-    if (!anyRep) return; // solo isometrici/cardio: niente progressione rip
+    if (!anyVal) return; // solo isometrici/cardio: niente progressione
     out.push({
       date:s.date,
+      val: best ? best.val : 0,
+      unit: unit,
       reps: best ? best.reps : 0,
+      distance: best ? best.distance : 0,
       weight: best ? best.weight : 0,
       rpe: best ? best.rpe : null,
       avgRpe: rpes.length ? Math.round(rpes.reduce(function(a,b){return a+b;},0)/rpes.length*10)/10 : null,
@@ -998,21 +1047,22 @@ function analyzeExerciseProgress(exId) {
   var prev = log.length>1 ? log[log.length-2] : null;
   var lastDate = new Date(last.date).getTime();
 
-  // Sessioni "a tetto": tutte le serie a rep >= maxReps
-  var atCeilingLog = log.filter(function(r){ return r.reps>=maxReps; });
+  // Sessioni "a tetto": tutte le serie al massimo della progressione
+  // (ripetizioni, o metri per i carry)
+  var atCeilingLog = log.filter(function(r){ return r.val>=maxReps; });
   var firstCeil = atCeilingLog.length ? atCeilingLog[0] : null;
 
   // Quante sessioni consecutive (dalla piu' recente) sono ferme a tetto
-  // con lo stesso carico e senza aumentare le ripetizioni
+  // con lo stesso carico e senza aumentare il valore di progressione
   var streak = 0;
   for (var i=log.length-1; i>=0; i--) {
-    if (log[i].reps>=maxReps && log[i].weight===last.weight) streak++;
+    if (log[i].val>=maxReps && log[i].weight===last.weight) streak++;
     else break;
   }
 
   // Carico salito rispetto alla prima volta che il tetto e' stato toccato?
   var loadSteppedUp = !!(firstCeil && loaded && last.weight>firstCeil.weight);
-  var repsGrew = !!(prev && last.reps>prev.reps);
+  var repsGrew = !!(prev && last.val>prev.val);
   var daysSince = Math.round((Date.now()-lastDate)/86400000);
   var avgRpeCeil = (function(){
     var v = atCeilingLog.map(function(r){return r.avgRpe;}).filter(function(x){return x!=null;});
@@ -1035,7 +1085,7 @@ function analyzeExerciseProgress(exId) {
     loaded: loaded,
     last: last,
     daysSince: daysSince,
-    atCeiling: last.reps>=maxReps,
+    atCeiling: last.val>=maxReps,
     loadSteppedUp: loadSteppedUp,
     repsGrew: repsGrew,
     streak: streak,
@@ -1077,45 +1127,58 @@ function findTemplateExercise(exId) {
 
 // Dove trovare i valori attuali: template se presente, altrimenti ultima sessione
 function currentPrescription(exId) {
+  var isCarry = getExerciseType(exId)==='carry';
   var found = findTemplateExercise(exId);
-  if (found) return {found:found, cfg:found.cfg, weight:snapWeight(found.cfg.weight), sets:found.cfg.sets||0, reps:found.cfg.reps||0, rest:found.cfg.rest||0};
+  // per i carry 'reps' ospita i metri: serve solo ai calcoli interni della scheda
+  if (found) return {found:found, cfg:found.cfg, weight:snapWeight(found.cfg.weight), sets:found.cfg.sets||0, reps:isCarry?(found.cfg.distance||0):(found.cfg.reps||0), rest:found.cfg.rest||0};
   var log = exerciseLog(exId);
   var last = log.length ? log[log.length-1] : null;
-  return {found:null, cfg:null, weight:last?snapWeight(last.weight):0, sets:last?last.sets:0, reps:last?last.reps:0, rest:0};
+  return {found:null, cfg:null, weight:last?snapWeight(last.weight):0, sets:last?last.sets:0, reps:last?last.val:0, rest:0};
 }
 
 // Passo di progressione: +carico, si riparte dal minimo della progressione.
 // Il salto resta sempre multiplo di 0,5 kg (vedi WEIGHT_STEP).
+// I carry aggiungono anche il passo in metri.
 function progressionPrescription(exId) {
   var p = currentPrescription(exId);
   var ladder = getRepProgression(exId);
+  var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
   var manualInc = p.cfg && p.cfg.increments && p.cfg.increments.weight ? snapWeight(p.cfg.increments.weight) : 0;
   var autoInc = snapWeight(p.weight>=100 ? 2.5 : 1);
   var step = manualInc>0 ? manualInc : autoInc;
+  var distStep = (p.cfg && p.cfg.increments && p.cfg.increments.distance) || CARRY_DEFAULT_DIST_STEP;
+  var targetDist = snapToProgression(p.reps + distStep, ladder);
+  var loadLabel = loaded ? '+'+fmtWeight(step)+'kg' : '+'+ladder[0]+' rip';
+  if (isCarry) loadLabel = (loaded ? '+'+fmtWeight(step)+'kg · ' : '')+'+'+distStep+'m';
   return {
     weight: loaded ? snapWeight(p.weight+step) : 0,
+    distance: isCarry ? targetDist : 0,
     sets: p.sets || 3,
     reps: ladder[0],
     rest: p.rest,
     step: step,
+    distStep: distStep,
     loaded: loaded,
-    loadLabel: loaded ? '+'+fmtWeight(step)+'kg' : '+'+ladder[0]+' rip'
+    loadLabel: loadLabel
   };
 }
 
-// Deload: -30% carico, -50% serie, rep verso la meta' della progressione
+// Deload: -30% carico, -50% serie, rep verso la meta' della progressione.
+// Sui carry la distanza resta invariata: lo scarico riguarda carico e serie.
 function deloadPrescription(exId) {
   var p = currentPrescription(exId);
   var ladder = getRepProgression(exId);
+  var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
   var midRep = ladder[Math.floor((ladder.length-1)/2)];
   var sets = Math.max(1, Math.round((p.sets||3)*DELOAD_SETS_PCT));
   var rest = p.rest ? Math.round(p.rest*DELOAD_REST_PCT) : 0;
   return {
     weight: loaded ? snapWeight(p.weight*DELOAD_LOAD_PCT) : 0,
+    distance: isCarry ? p.reps : 0,
     sets: sets,
-    reps: midRep,
+    reps: isCarry ? p.reps : midRep,
     rest: rest,
     loaded: loaded,
     loadLabel: loaded ? '-'+Math.round((1-DELOAD_LOAD_PCT)*100)+'% carico' : 'a corpo libero'
@@ -1132,17 +1195,23 @@ function applyProgressionAdvice(exId, action) {
   var isDeload = (action==='deload');
   var presc = isDeload ? deloadPrescription(exId) : progressionPrescription(exId);
   var cfg = p.found.cfg;
+  var isCarry = getExerciseType(exId)==='carry';
+  var unit = isCarry ? 'm' : ' rip';
 
   cfg.sets = presc.sets;
-  if (cfg.reps !== undefined) cfg.reps = presc.reps;
+  // sui carry la progressione e' in METRI: si aggiorna la distanza, non le reps
+  if (isCarry && cfg.distance !== undefined) cfg.distance = presc.distance;
+  else if (!isCarry && cfg.reps !== undefined) cfg.reps = presc.reps;
   if (cfgAllowsWeight(cfg) && cfg.weight !== undefined) cfg.weight = presc.weight;
   if (presc.rest && cfg.rest !== undefined) cfg.rest = presc.rest;
 
   if (isDeload) {
-    cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'x'+presc.reps+'. Tieni RPE 6-7, poi torna al carico pieno.';
+    cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'×'+presc.reps+unit+'. Tieni RPE 6-7, poi torna al carico pieno.';
     showToast('Deload applicato a '+r.name);
   } else {
-    cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+presc.reps+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
+    // per i carry si parte dai metri nuovi, non si riparte dal minimo della ladder
+    var nextVal = isCarry ? presc.distance : presc.reps;
+    cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+nextVal+unit+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
     showToast('Progressione aggiornata: '+r.name+' '+presc.loadLabel);
   }
   saveState();
@@ -1210,9 +1279,13 @@ function renderProgressionAdvisor() {
     var color = isDeload ? 'var(--green)' : 'var(--accent)';
     var tag = isDeload ? 'DELOAD' : 'PROGRESSI';
     var title = isDeload ? 'Tetto raggiunto, scarica' : 'Aumenta il carico';
+    // I carry parlano in metri, il resto in ripetizioni
+    var unit = (r.type==='carry') ? 'm' : ' rip';
+    var curVal = r.last.val;
+    var nextVal = isDeload ? presc.reps : ((r.type==='carry') ? presc.distance : presc.reps);
     var body = isDeload
-      ? 'Sei fermo a <b>'+r.last.reps+' rip × '+r.last.weight+'kg</b> da '+r.streak+' sessioni. Prossima settimana: <b>'+presc.sets+'×'+presc.reps+(presc.loaded?' @ '+presc.weight+'kg':'')+'</b> ('+presc.loadLabel+').'
-      : 'Ultima serie <b>'+r.last.reps+' rip'+(r.loaded?' @ '+r.last.weight+'kg':'')+'</b>. Prossimo passo: <b>'+presc.loadLabel+'</b>, riparte da '+presc.reps+' rip.';
+      ? 'Sei fermo a <b>'+curVal+unit+' × '+r.last.weight+'kg</b> da '+r.streak+' sessioni. Prossima settimana: <b>'+presc.sets+'×'+nextVal+unit+(presc.loaded?' @ '+presc.weight+'kg':'')+'</b> ('+presc.loadLabel+').'
+      : 'Ultima serie <b>'+curVal+unit+(r.loaded?' @ '+r.last.weight+'kg':'')+'</b>. Prossimo passo: <b>'+presc.loadLabel+'</b>, riparte da '+nextVal+unit+'.';
 
     html += '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">'+
       '<div class="flex justify-between items-center" style="margin-bottom:5px">'+
@@ -1329,14 +1402,14 @@ let editingTemplateIdx = null;
 let editingTemplateColor = '#e8ff47';
 let editingTemplateExercises = [];
 let warmupCount = 0;
-let increments = {weight:0,sets:0,reps:0};
+let increments = {weight:0,sets:0,reps:0,distance:0};
 let pickerMode = 'template';
 let configExerciseIdx = null;
 let pendingExerciseId = '';
 let cxCategory = 'Multiarticolare';
 let cxEmoji = '🏋️';
 let siExIdx = null;
-let siIncrements = {weight:0,sets:0,reps:0};
+let siIncrements = {weight:0,sets:0,reps:0,distance:0};
 let muscleFilter = '';
 let sessionTimerInterval = null;
 let restTimerInterval = null;
@@ -2090,10 +2163,10 @@ function renderTplExerciseList() {
   document.getElementById('tpl-ex-count').textContent = editingTemplateExercises.length;
   document.getElementById('tpl-exercise-list').innerHTML = editingTemplateExercises.map(function(e,i){
     var ex=findExercise(e.exerciseId); if(!ex)return'';
-    var hasInc = e.increments && (e.increments.weight||e.increments.sets||e.increments.reps);
+    var incFlag = hasInc(e.increments);
     return '<div class="flex items-center gap-8" style="margin-bottom:10px">'+
       '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+ex.name+'</div>'+
-      '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+cfgSummary(e)+(e.rpe?' RPE '+e.rpe:'')+(hasInc?' +prog':'')+'</div></div>'+
+      '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+cfgSummary(e)+(e.rpe?' RPE '+e.rpe:'')+(incFlag?' +prog':'')+'</div></div>'+
       '<button class="btn btn-xs btn-secondary" onclick="configureTemplateExercise('+i+')">Config</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeTemplateExercise('+i+')">X</button></div>';
   }).join('') || '<div style="color:var(--text3);font-size:13px;margin-bottom:12px">Nessun esercizio aggiunto</div>';
@@ -2189,18 +2262,21 @@ function selectExercise(exId) {
   // Apply: last session values + last progression, then zero out progression and RPE
   var last = getLastSessionDataForExercise(exId);
   if (last) {
-    var inc = last.increments || {weight:0,sets:0,reps:0};
+    var inc = last.increments || {weight:0,sets:0,reps:0,distance:0};
     document.getElementById('cfg-sets').value   = Math.max(1, last.sets   + (inc.sets||0));
     var progression = getRepProgression(exId);
-    var rawReps = Math.max(1, last.reps + (inc.reps||0));
-    var snappedReps = snapToProgression(rawReps, progression);
+    var rawBase = (getExerciseType(exId)==='carry')
+      ? (last.distance || progression[0])
+      : (last.reps + (inc.reps||0));
+    if (!isFinite(rawBase)) rawBase = progression[0];
+    var snappedReps = snapToProgression(Math.max(1, rawBase), progression);
     var repCell = document.getElementById('cfg-reps-cell');
-    repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
+    repCell.innerHTML = '<label class="input-label">'+repCellLabel(exId)+'</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
     document.getElementById('cfg-weight').value = fmtWeight(last.weight + (inc.weight||0));
     document.getElementById('cfg-rest').value   = last.rest || 120;
     // Zero out progression and RPE so user sets them fresh for next session
     document.getElementById('cfg-rpe').value = '';
-    increments = {weight:0, sets:0, reps:0};
+    increments = normInc(null);
     updateIncrementDisplay();
   }
 }
@@ -2314,6 +2390,9 @@ function updateCfgModalForType(exType, existing) {
   if (incRepsRow) incRepsRow.parentElement.style.display = showReps ? '' : 'none';
   var incWeightRow = document.getElementById('inc-weight-row');
   if (incWeightRow) incWeightRow.style.display = showWeight ? '' : 'none';
+  // i carry hanno la progressione in metri, non in ripetizioni
+  var incDistanceRow = document.getElementById('inc-distance-row');
+  if (incDistanceRow) incDistanceRow.style.display = (exType==='carry') ? '' : 'none';
 }
 
 function openExerciseConfig(exId, existing) {
@@ -2322,12 +2401,15 @@ function openExerciseConfig(exId, existing) {
   document.getElementById('exercise-config-title').textContent = ex ? ex.name : 'Configura esercizio';
   document.getElementById('cfg-sets').value = existing ? existing.sets : 3;
 
-  // Reps (only for strength/bodyweight/power)
+  // Reps (only for strength/bodyweight/power); per i carry la ladder e' in metri
   var progression = getRepProgression(exId);
-  var initReps = existing ? existing.reps : progression[0];
+  var initReps = (exType==='carry')
+    ? ((existing && existing.distance) || progression[0])
+    : (existing ? existing.reps : progression[0]);
+  if (!isFinite(initReps)) initReps = progression[0];
   var snappedReps = snapToProgression(initReps, progression);
   var repCell = document.getElementById('cfg-reps-cell');
-  repCell.innerHTML = '<label class="input-label" id="cfg-reps-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
+  repCell.innerHTML = '<label class="input-label" id="cfg-reps-label">'+repCellLabel(exId)+'</label>'+buildRepSelector('cfg-reps', snappedReps, exId, 'stepCfgReps(DIR)');
 
   document.getElementById('cfg-weight').value   = existing ? fmtWeight(existing.weight) : 0;
   document.getElementById('cfg-rest').value     = existing ? (existing.rest||120)   : 120;
@@ -2338,9 +2420,7 @@ function openExerciseConfig(exId, existing) {
   if (document.getElementById('cfg-duration')) document.getElementById('cfg-duration').value = existing ? (existing.duration||20) : 20;
 
   warmupCount = existing ? (existing.warmup||0) : 0;
-  increments  = existing && existing.increments
-    ? {weight:snapWeight(existing.increments.weight), sets:existing.increments.sets||0, reps:existing.increments.reps||0}
-    : {weight:0, sets:0, reps:0};
+  increments  = (existing && existing.increments) ? normInc(existing.increments) : normInc(null);
   // Extra-load flag: bodyweight/power can be zavvorati (trazioni, push-up, medicine ball)
   cfgAllowWeight = existing ? cfgAllowsWeight(existing) : getExerciseWeightedDefault(exId);
   document.querySelectorAll('#cfg-allowweight-chips .chip').forEach(function(c){
@@ -2359,7 +2439,7 @@ function stepCfgReps(dir) {
   inp.value = newVal;
   // Re-render the rep selector
   var repCell = document.getElementById('cfg-reps-cell');
-  repCell.innerHTML = '<label class="input-label">Rip. ('+progression.join('→')+')</label>'+buildRepSelector('cfg-reps', newVal, pendingExerciseId, 'stepCfgReps(DIR)');
+  repCell.innerHTML = '<label class="input-label">'+repCellLabel(pendingExerciseId)+'</label>'+buildRepSelector('cfg-reps', newVal, pendingExerciseId, 'stepCfgReps(DIR)');
 }
 
 function selectWarmup(n, el) {
@@ -2399,6 +2479,12 @@ function updateIncrementDisplay() {
     sEl.textContent = (sv>0?'+':'')+sv;
     sEl.className = 'inc-value '+(sv>0?'pos':sv<0?'neg':'zero');
   }
+  var dEl = document.getElementById('inc-distance-val');
+  if (dEl){
+    var dv = increments.distance||0;
+    dEl.textContent = (dv>0?'+':'')+dv;
+    dEl.className = 'inc-value '+(dv>0?'pos':dv<0?'neg':'zero');
+  }
   // Reps: show absolute target value with progression steps
   var progression = getRepProgression(pendingExerciseId);
   var currentReps = parseInt(document.getElementById('cfg-reps') ? document.getElementById('cfg-reps').value : progression[0]) || progression[0];
@@ -2426,7 +2512,8 @@ function saveExerciseConfig() {
     exerciseType: exType,
     allowWeight:  cfgAllowWeight,
     sets:     parseInt(document.getElementById('cfg-sets').value)||3,
-    reps:     parseInt(document.getElementById('cfg-reps')    ? document.getElementById('cfg-reps').value    : 0)||0,
+    reps:     exType==='carry' ? 0
+              : (parseInt(document.getElementById('cfg-reps') ? document.getElementById('cfg-reps').value : 0)||0),
     weight:   snapWeight(document.getElementById('cfg-weight') ? document.getElementById('cfg-weight').value : 0),
     distance: distEl ? (parseFloat(distEl.value)||30) : 0,
     duration: durEl  ? (parseFloat(durEl.value)||20)  : 0,
@@ -2434,7 +2521,7 @@ function saveExerciseConfig() {
     rpe:      document.getElementById('cfg-rpe').value,
     notes:    document.getElementById('cfg-notes').value,
     warmup:   warmupCount,
-    increments:{weight:increments.weight,sets:increments.sets,reps:increments.reps},
+    increments:{weight:increments.weight,sets:increments.sets,reps:increments.reps,distance:increments.distance||0},
   };
   if (pickerMode==='template') {
     if (configExerciseIdx!==null) editingTemplateExercises[configExerciseIdx]=cfg;
@@ -2557,7 +2644,7 @@ function getLastSessionDataForExercise(exId) {
         reps: lastSet.reps || 10,
         weight: maxW,
         rest: rest,
-        increments: e.increments || {weight:0,sets:0,reps:0}
+        increments: e.increments || {weight:0,sets:0,reps:0,distance:0}
       };
     }
   }
@@ -2574,14 +2661,14 @@ function buildSessionExercise(cfg) {
   if (exType === 'strength' || exType === 'bodyweight') {
     var last = getLastSessionDataForExercise(cfg.exerciseId);
     if (last) {
-      var inc = last.increments || {weight:0,sets:0,reps:0};
+      var inc = last.increments || {weight:0,sets:0,reps:0,distance:0};
       if (effectiveCfg.allowWeight) effectiveCfg.weight = snapWeight(last.weight+(inc.weight||0));
       effectiveCfg.reps = Math.max(1, last.reps+(inc.reps||0));
       effectiveCfg.sets = cfg.sets;
       effectiveCfg.rest = cfg.rest || 120;
     }
   }
-  effectiveCfg.increments = {weight:0,sets:0,reps:0};
+  effectiveCfg.increments = {weight:0,sets:0,reps:0,distance:0};
   effectiveCfg.rpe = '';
   effectiveCfg.exerciseType = exType;
   var sets = [];
@@ -2658,13 +2745,16 @@ function addExerciseToSession() {
 function renderSessionExercises() {
   if (!state.activeSession) return;
   document.getElementById('session-exercises').innerHTML = state.activeSession.exercises.map(function(ex,exIdx){
-    var inc = ex.config.increments||{weight:0,sets:0,reps:0};
+    var inc = normInc(ex.config.increments);
+    var exType = ex.config.exerciseType || getExerciseType(ex.config.exerciseId);
+    var isCarry = exType==='carry';
     var nextParts = [];
     if (inc.weight) nextParts.push('<span class="'+(inc.weight>0?'nd-up':'nd-dn')+'">'+(inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg</span>');
     if (inc.sets) nextParts.push('<span class="'+(inc.sets>0?'nd-up':'nd-dn')+'">'+(inc.sets>0?'+':'')+inc.sets+' serie</span>');
-    if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
+    // il delta "reps" non esiste sui carry: lì la progressione e' in metri
+    if (isCarry) { if (inc.distance) nextParts.push('<span class="'+(inc.distance>0?'nd-up':'nd-dn')+'">'+(inc.distance>0?'+':'')+inc.distance+'m</span>'); }
+    else if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
     var wuCount = ex.config.warmup||0;
-    var exType = ex.config.exerciseType || getExerciseType(ex.config.exerciseId);
     var withWeight = cfgAllowsWeight(ex.config);
     // Column headers depend on type
     var hdrCols, colTemplate;
@@ -2743,10 +2833,11 @@ function renderSessionExercises() {
       '<div class="next-badge"><span class="nd-0">Prox:</span>'+(nextParts.length?nextParts.join(' '):'<span class="nd-0">nessuna modifica</span>')+
       '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
       (function(){
+        // la ladder dei carry e' in metri: l'etichetta deve dire "m", non "rip"
         var progression = getRepProgression(ex.config ? ex.config.exerciseId : null);
-        var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+'</span>';
+        var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+(isCarry?'m':'')+'</span>';
         var noteTxt = ex.config.notes ? '<span>'+ex.config.notes+'</span> · ' : '';
-        return '<div class="ex-note-bar">'+noteTxt+'rip: '+progStr+'</div>';
+        return '<div class="ex-note-bar">'+noteTxt+(isCarry?'distanza: ':'rip: ')+progStr+'</div>';
       })()+
       '</div>';
   }).join('')+
@@ -2796,7 +2887,12 @@ function addSet(exIdx) {
   var sets = state.activeSession.exercises[exIdx].sets;
   var last = null;
   for (var i=sets.length-1;i>=0;i--){if(sets[i].type==='work'){last=sets[i];break;}}
-  sets.push({type:'work',reps:last?last.reps:10,weight:last?last.weight:0,rpe:'',done:false});
+  var aCfg = state.activeSession.exercises[exIdx].config;
+  var aIsCarry = (aCfg.exerciseType || getExerciseType(aCfg.exerciseId)) === 'carry';
+  // i carry non hanno ripetizioni: la serie nuova eredita la distanza
+  sets.push(aIsCarry
+    ? {type:'work', reps:0, distance:last?(last.distance||0):(aCfg.distance||30), weight:last?last.weight:0, rpe:'', done:false}
+    : {type:'work', reps:last?last.reps:10, weight:last?last.weight:0, rpe:'', done:false});
   saveState();
   renderSessionExercises();
 }
@@ -2822,23 +2918,25 @@ function removeSessionExercise(exIdx) {
 function openSessionIncrement(exIdx) {
   siExIdx = exIdx;
   var ex = state.activeSession.exercises[exIdx];
-  var inc = ex.config.increments||{weight:0,sets:0,reps:0};
-  siIncrements = {weight:snapWeight(inc.weight),sets:inc.sets||0,reps:inc.reps||0};
+  siIncrements = normInc(ex.config.increments);
   document.getElementById('si-title').textContent = (ex.ex?ex.ex.name:'Esercizio')+' — Progressione';
   updateSIDisplay();
   openModal('modal-session-increment');
 }
 
 function changeSI(field,delta) {
-  if (field === 'reps') {
-    var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
-    var exId = ex && ex.config ? ex.config.exerciseId : null;
+  var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
+  var exId = ex && ex.config ? ex.config.exerciseId : null;
+  var isCarry = !!exId && getExerciseType(exId)==='carry';
+  // sul carry la riga "reps" e' in realta' la distanza in metri
+  if (field === 'reps' && isCarry) field = 'distance';
+  if (field === 'reps' || field === 'distance') {
     var progression = getRepProgression(exId);
-    // Current reps = last performed work set reps (or config reps)
-    var currentReps = getCurrentSIReps(ex, progression);
-    var targetReps = currentReps + siIncrements.reps;
-    var newTarget = nextRep(targetReps, progression, delta);
-    siIncrements.reps = newTarget - currentReps;
+    var current = getCurrentSIValue(ex, progression, isCarry);
+    var acc = (field === 'distance') ? siIncrements.distance : siIncrements.reps;
+    var newTarget = nextRep(current + acc, progression, delta);
+    if (field === 'distance') siIncrements.distance = newTarget - current;
+    else siIncrements.reps = newTarget - current;
   } else if (field === 'weight') {
     // Tieni il delta sempre sulla griglia da 0,5 kg, così si torna a 0 esatto
     siIncrements.weight = snapWeight(siIncrements.weight + delta);
@@ -2848,12 +2946,16 @@ function changeSI(field,delta) {
   updateSIDisplay();
 }
 
-function getCurrentSIReps(ex, progression) {
+// Valore corrente su cui calcolare il delta: ripetizioni, o metri per i carry
+function getCurrentSIValue(ex, progression, isCarry) {
   if (!ex) return progression[0];
-  // Use last performed work set reps if available
   var workSets = ex.sets ? ex.sets.filter(function(s){ return s.type==='work'; }) : [];
-  if (workSets.length) return workSets[workSets.length-1].reps || progression[0];
-  return (ex.config && ex.config.reps) || progression[0];
+  var last = workSets.length ? workSets[workSets.length-1] : null;
+  var v = last
+    ? (isCarry ? last.distance : last.reps)
+    : (isCarry ? (ex.config && ex.config.distance) : (ex.config && ex.config.reps));
+  if (!isFinite(v) || !v) return progression[0];
+  return v;
 }
 
 function updateSIDisplay() {
@@ -2872,30 +2974,37 @@ function updateSIDisplay() {
   // Reps: show target with step info
   var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
   var exId = ex && ex.config ? ex.config.exerciseId : null;
+  var isCarry = !!exId && getExerciseType(exId)==='carry';
   // Hide the kg row when the exercise doesn't track weight (p.ej. trazioni senza zavorra)
   var wRow = document.getElementById('si-weight-row');
   if (wRow) wRow.style.display = cfgAllowsWeight(ex && ex.config ? ex.config : null) ? '' : 'none';
+  var lbl = document.getElementById('si-reps-label');
+  if (lbl) lbl.textContent = isCarry ? 'Distanza (m)' : 'Ripetizioni';
   var progression = getRepProgression(exId);
-  var currentReps = getCurrentSIReps(ex, progression);
-  var targetReps = snapToProgression(currentReps + siIncrements.reps, progression);
+  var acc = isCarry ? (siIncrements.distance||0) : (siIncrements.reps||0);
+  var current = getCurrentSIValue(ex, progression, isCarry);
+  var targetReps = snapToProgression(current + acc, progression);
   var isMin = targetReps <= progression[0], isMax = targetReps >= progression[progression.length-1];
   var repsRow = document.getElementById('si-reps-row');
   if (repsRow) {
     repsRow.innerHTML =
       '<button class="inc-btn" '+(isMin?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',-1)">−</button>'+
-      '<div class="inc-value '+(targetReps > currentReps ? 'pos' : targetReps < currentReps ? 'neg' : 'zero')+'" id="si-reps-val">'+
-        (siIncrements.reps > 0 ? '+' : '') + siIncrements.reps + ' → ' + targetReps +
+      '<div class="inc-value '+(targetReps > current ? 'pos' : targetReps < current ? 'neg' : 'zero')+'" id="si-reps-val">'+
+        (acc > 0 ? '+' : '') + acc + ' → ' + targetReps +
       '</div>'+
       '<button class="inc-btn" '+(isMax?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',1)">+</button>';
   } else {
     var el = document.getElementById('si-reps-val');
-    if (el) { el.textContent = (siIncrements.reps>0?'+':'')+siIncrements.reps; el.className='inc-value '+(siIncrements.reps>0?'pos':siIncrements.reps<0?'neg':'zero'); }
+    if (el) { el.textContent = (acc>0?'+':'')+acc; el.className='inc-value '+(acc>0?'pos':acc<0?'neg':'zero'); }
   }
 }
 
 function saveSI() {
   if (siExIdx===null) return;
-  state.activeSession.exercises[siExIdx].config.increments = {weight:siIncrements.weight,sets:siIncrements.sets,reps:siIncrements.reps};
+  state.activeSession.exercises[siExIdx].config.increments = {
+    weight:siIncrements.weight, sets:siIncrements.sets,
+    reps:siIncrements.reps, distance:siIncrements.distance||0
+  };
   saveState();
   closeModal('modal-session-increment');
   renderSessionExercises();
@@ -3005,7 +3114,7 @@ function confirmFinishSession() {
       sets: workSets,
       volume: vol,
       notes: ex.config.notes||'',
-      increments: ex.config.increments || {weight:0,sets:0,reps:0}
+      increments: ex.config.increments || {weight:0,sets:0,reps:0,distance:0}
     };
   }).filter(function(ex){ return ex.sets.length > 0; }); // FIX 1: escludi esercizi senza serie completate
 
@@ -3023,16 +3132,24 @@ function confirmFinishSession() {
     var tpl = state.templates[state.activeSession.templateIdx];
     if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
       var cfg = tpl.exercises[i]; if (!cfg) return;
-      var inc = sexe.config.increments || {weight:0,sets:0,reps:0};
+      var inc = normInc(sexe.config.increments);
+      var sType = sexe.config.exerciseType || getExerciseType(sexe.config.exerciseId);
       // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
       var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
       if (workSets.length) {
         var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
         var lastSet = workSets[workSets.length-1];
         cfg.weight = snapWeight(maxW + (inc.weight||0));
-        cfg.reps = Math.max(1, lastSet.reps + (inc.reps||0));
         cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
-        cfg.increments = {weight: inc.weight||0, sets: inc.sets||0, reps: inc.reps||0};
+        if (sType==='carry') {
+          // sui carry si progredisce in metri: reps resta a 0 così il template non moltiplica NaN
+          var maxDist = Math.max.apply(null, workSets.map(function(s){ return s.distance||0; }));
+          cfg.distance = Math.max(0, maxDist + (inc.distance||0));
+          cfg.reps = 0;
+        } else {
+          cfg.reps = Math.max(1, (lastSet.reps||1) + (inc.reps||0));
+        }
+        cfg.increments = inc;
       }
       // Se nessuna serie completata: non toccare cfg, non applicare progressione
     });
@@ -3125,7 +3242,7 @@ function showSessionDetail(idx) {
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   // FIX 3: mostra solo gli incrementi salvati nella sessione — nessun fallback al template
   function getInc(exId, savedInc) {
-    if (savedInc && (savedInc.weight || savedInc.sets || savedInc.reps)) return savedInc;
+    if (hasInc(savedInc)) return savedInc;
     return null;
   }
   document.getElementById('session-detail-content').innerHTML =
@@ -3138,16 +3255,23 @@ function showSessionDetail(idx) {
     (s.exercises||[]).map(function(e){
       var ex=findExercise(e.exerciseId);if(!ex)return'';
       var inc = getInc(e.exerciseId, e.increments);
+      var isCarry = getExerciseType(e.exerciseId)==='carry';
       var incParts = [];
       if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg peso');
       if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
-      if (inc && inc.reps)   incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
+      // sui carry il delta rilevante è la distanza, non le ripetizioni
+      if (inc && isCarry && inc.distance) incParts.push((inc.distance>0?'+':'')+inc.distance+'m');
+      else if (inc && inc.reps) incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
       return '<div style="margin-bottom:16px">'+
         '<div class="font-bold" style="margin-bottom:4px">'+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
         (e.sets||[]).map(function(set,i){
+          if (isCarry) {
+            var cw = set.weight ? set.weight+'kg × ' : '';
+            return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
+          }
           var load = set.weight ? set.weight+'kg × ' : '';
           return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
         }).join('')+
@@ -3337,28 +3461,28 @@ function editCurrentSession() {
   // Convert saved exercises back to retro format, recovering increments with same fallback as showSessionDetail
   retroExercises = (s.exercises||[]).map(function(e){
     // 1) saved on exercise
-    var inc = (e.increments && (e.increments.weight||e.increments.sets||e.increments.reps)) ? e.increments : null;
+    var inc = hasInc(e.increments) ? e.increments : null;
     // 2) linked template
     if (!inc && s.templateIdx != null) {
       var tpl = state.templates[s.templateIdx];
       if (tpl) {
         var te = tpl.exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
-        if (te && te.increments && (te.increments.weight||te.increments.sets||te.increments.reps)) inc = te.increments;
+        if (hasInc(te.increments)) inc = te.increments;
       }
     }
     // 3) any template
     if (!inc) {
       for (var t=0; t<state.templates.length; t++) {
         var te = state.templates[t].exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
-        if (te && te.increments && (te.increments.weight||te.increments.sets||te.increments.reps)) { inc = te.increments; break; }
+        if (hasInc(te.increments)) { inc = te.increments; break; }
       }
     }
     return {
       exerciseId: e.exerciseId,
       sets: (e.sets||[]).map(function(set){
-        return {weight: set.weight||0, reps: set.reps||0, rpe: set.rpe||''};
+        return {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, rpe: set.rpe||''};
       }),
-      increments: inc ? {weight:inc.weight||0, sets:inc.sets||0, reps:inc.reps||0} : {weight:0,sets:0,reps:0}
+      increments: inc ? normInc(inc) : normInc(null)
     };
   });
   // Fill form fields
@@ -3382,14 +3506,14 @@ function renderRetroExerciseList() {
   document.getElementById('retro-exercise-list').innerHTML = retroExercises.map(function(re, idx) {
     var ex = findExercise(re.exerciseId);
     var name = ex ? (ex.name) : re.exerciseId;
-    var inc = re.increments || {weight:0,sets:0,reps:0};
-    inc.weight = snapWeight(inc.weight);
+    var inc = normInc(re.increments);
+    var isCarry = getExerciseType(re.exerciseId)==='carry';
 
     var setsHtml = re.sets.map(function(s, si) {
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
         '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
-        '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+s.weight+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
-        '<input type="number" class="set-inp" style="flex:1" placeholder="rip" value="'+s.reps+'" oninput="updateRetroSet('+idx+','+si+',\'reps\',this.value)" min="1">'+
+        '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+(s.weight||'')+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
+        '<input type="number" class="set-inp" style="flex:1" placeholder="'+(isCarry?'m':'rip')+'" value="'+(isCarry?(s.distance||0):s.reps)+'" oninput="updateRetroSet('+idx+','+si+',\''+(isCarry?'distance':'reps')+'\',this.value)"'+(isCarry?' min="0" step="5"':' min="1"')+'>'+
         '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
           ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+(s.rpe===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
         '</select>'+
@@ -3427,18 +3551,23 @@ function renderRetroExerciseList() {
           '</div>'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',1)">+</button>'+
         '</div>'+
-        // reps — fixed step progression
+        // ripetizioni (o distanza, sui carry) — step fissi sulla ladder
         (function() {
           var progression = getRepProgression(re.exerciseId);
-          var currentReps = re.sets.length ? (re.sets[re.sets.length-1].reps || progression[0]) : progression[0];
-          var targetReps = snapToProgression(currentReps + inc.reps, progression);
-          var isMinR = targetReps <= progression[0], isMaxR = targetReps >= progression[progression.length-1];
-          var repColor = targetReps > currentReps ? 'var(--green)' : targetReps < currentReps ? 'var(--red)' : 'var(--text3)';
+          var lastSet = re.sets.length ? re.sets[re.sets.length-1] : null;
+          var cur = isCarry ? ((lastSet && lastSet.distance) || progression[0])
+                            : ((lastSet && lastSet.reps) || progression[0]);
+          if (!isFinite(cur)) cur = progression[0];
+          var base = snapToProgression(Math.max(progression[0], cur), progression);
+          var acc = isCarry ? (inc.distance||0) : (inc.reps||0);
+          var target = snapToProgression(base + acc, progression);
+          var isMinR = target <= progression[0], isMaxR = target >= progression[progression.length-1];
+          var repColor = target > base ? 'var(--green)' : target < base ? 'var(--red)' : 'var(--text3)';
           return '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
             '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMinR?'opacity:0.3':'')+ '" '+(isMinR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',-1)">−</button>'+
             '<div style="text-align:center;min-width:36px">'+
-              '<div style="font-size:13px;font-weight:900;color:'+repColor+'">'+(inc.reps>0?'+':'')+inc.reps+' → '+targetReps+'</div>'+
-              '<div style="font-size:9px;color:var(--text3)">rip ('+progression.join('→')+')</div>'+
+              '<div style="font-size:13px;font-weight:900;color:'+repColor+'">'+(acc>0?'+':'')+acc+' → '+target+'</div>'+
+              '<div style="font-size:9px;color:var(--text3)">'+(isCarry?'m':'rip')+' ('+progression.join('→')+(isCarry?'m':'')+')</div>'+
             '</div>'+
             '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMaxR?'opacity:0.3':'')+ '" '+(isMaxR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',1)">+</button>'+
           '</div>';
@@ -3464,7 +3593,7 @@ function renderRetroExerciseList() {
         '<span style="min-width:24px"></span>'+/* space for reorder */
         '<span style="font-size:10px;color:var(--text3);min-width:20px"></span>'+
         '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
-        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RIP</span>'+
+        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">'+(isCarry?'M':'RIP')+'</span>'+
         '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE</span>'+
         '<span style="width:34px"></span>'+
       '</div>'+
@@ -3484,15 +3613,22 @@ function moveRetroExercise(idx, dir) {
 }
 
 function updateRetroIncrement(exIdx, field, delta) {
-  if (!retroExercises[exIdx].increments) retroExercises[exIdx].increments = {weight:0,sets:0,reps:0};
-  var inc = retroExercises[exIdx].increments;
-  if (field === 'reps') {
-    var re = retroExercises[exIdx];
+  var re = retroExercises[exIdx];
+  re.increments = normInc(re.increments);
+  var inc = re.increments;
+  var isCarry = getExerciseType(re.exerciseId)==='carry';
+  if (field === 'reps' && isCarry) field = 'distance';
+  if (field === 'reps' || field === 'distance') {
     var progression = getRepProgression(re.exerciseId);
-    var currentReps = re.sets.length ? (re.sets[re.sets.length-1].reps || progression[0]) : progression[0];
-    var targetReps = snapToProgression(currentReps + inc.reps, progression);
-    var newTarget = nextRep(targetReps, progression, delta);
-    inc.reps = newTarget - currentReps;
+    var lastSet = re.sets.length ? re.sets[re.sets.length-1] : null;
+    var cur = isCarry ? ((lastSet && lastSet.distance) || progression[0])
+                      : ((lastSet && lastSet.reps) || progression[0]);
+    if (!isFinite(cur)) cur = progression[0];
+    var base = snapToProgression(Math.max(progression[0], cur), progression);
+    var acc = (field === 'distance') ? (inc.distance||0) : (inc.reps||0);
+    var newTarget = nextRep(snapToProgression(base + acc, progression), progression, delta);
+    if (field === 'distance') inc.distance = newTarget - base;
+    else inc.reps = newTarget - base;
   } else if (field === 'weight') {
     inc.weight = snapWeight(inc.weight + delta);
   } else {
@@ -3533,7 +3669,13 @@ function filterRetroExercises() {
 }
 
 function pickRetroExercise(exId) {
-  retroExercises.push({exerciseId: exId, sets:[{weight:0,reps:10,rpe:''}], increments:{weight:0,sets:0,reps:0}});
+  var firstDist = getRepProgression(exId)[0];
+  var isCarryNew = getExerciseType(exId)==='carry';
+  retroExercises.push({
+    exerciseId: exId,
+    sets: isCarryNew ? [{weight:0,reps:0,distance:firstDist,rpe:''}] : [{weight:0,reps:10,distance:0,rpe:''}],
+    increments: normInc(null)
+  });
   closeModal('modal-retro-ex-picker');
   renderRetroExerciseList();
   // Scroll modal to bottom so the new exercise and the "Aggiungi" button are visible
@@ -3549,14 +3691,27 @@ function removeRetroExercise(idx) {
 }
 
 function addRetroSet(idx) {
-  var last = retroExercises[idx].sets[retroExercises[idx].sets.length-1] || {weight:0,reps:10,rpe:''};
-  retroExercises[idx].sets.push({weight:last.weight, reps:last.reps, rpe:last.rpe});
+  var re = retroExercises[idx];
+  var isCarry = getExerciseType(re.exerciseId)==='carry';
+  var last = re.sets[re.sets.length-1] || {weight:0,reps:10,distance:0,rpe:''};
+  re.sets.push({
+    weight: last.weight||0,
+    reps: isCarry ? 0 : (last.reps||10),
+    distance: isCarry ? (last.distance||getRepProgression(re.exerciseId)[0]) : 0,
+    rpe: last.rpe||''
+  });
   renderRetroExerciseList();
 }
 
 function removeRetroSet(exIdx, setIdx) {
-  retroExercises[exIdx].sets.splice(setIdx, 1);
-  if (!retroExercises[exIdx].sets.length) retroExercises[exIdx].sets.push({weight:0,reps:10,rpe:''});
+  var re = retroExercises[exIdx];
+  var isCarry = getExerciseType(re.exerciseId)==='carry';
+  re.sets.splice(setIdx, 1);
+  if (!re.sets.length) {
+    re.sets.push(isCarry
+      ? {weight:0,reps:0,distance:getRepProgression(re.exerciseId)[0],rpe:''}
+      : {weight:0,reps:10,distance:0,rpe:''});
+  }
   renderRetroExerciseList();
 }
 
@@ -3573,14 +3728,22 @@ function saveRetroSession() {
   if (!retroExercises.length) { showToast('Aggiungi almeno un esercizio'); return; }
   var totalVolume=0, totalSets=0;
   var exercises = retroExercises.map(function(re){
-    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*(s.reps||0));},0);
+    var isCarry = getExerciseType(re.exerciseId)==='carry';
+    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*(isCarry?0:(s.reps||0)));},0);
     totalVolume += vol; totalSets += re.sets.length;
     return {
       exerciseId: re.exerciseId,
-      sets: re.sets.map(function(s){return {weight:s.weight,reps:s.reps,rpe:s.rpe,type:'work',done:true};}),
+      sets: re.sets.map(function(s){
+        return {
+          weight: s.weight||0,
+          reps: isCarry ? 0 : (s.reps||0),
+          distance: isCarry ? (s.distance||0) : 0,
+          rpe: s.rpe||'', type:'work', done:true
+        };
+      }),
       volume: vol,
       notes: '',
-      increments: re.increments || {weight:0,sets:0,reps:0}
+      increments: normInc(re.increments)
     };
   });
 
@@ -3620,7 +3783,7 @@ function saveRetroSession() {
 // Returns a fresh copy every call so callers can safely mutate the result.
 // ============================================================
 function defaultProgramTemplates() {
-  var INC = function(w,s,r){return {weight:w,sets:s,reps:r};};
+  var INC = function(w,s,r,d){return {weight:w,sets:s,reps:r,distance:d||0};};
   return [
   // ── LUNEDÌ — UPPER + POTENZA ──────────────────────────────────────────
   {
@@ -3638,7 +3801,7 @@ function defaultProgramTemplates() {
       // Isolamento
       {exerciseId:'lr',    exerciseType:'strength', sets:2,reps:10,weight:10,distance:0, duration:0, rest:52,  rpe:'',   warmup:0, notes:'Alzate laterali — progressione 10→12→15 rip. Recupero 45–60s.', increments:INC(0,0,1)},
       // Carry
-      {exerciseId:'fw',    exerciseType:'carry',    sets:3,reps:0, weight:20, distance:30,duration:0, rest:75,  rpe:'',   warmup:0, notes:"Farmer's walk — 30–40m per serie. Recupero 60–90s.", increments:INC(2.5,0,0)},
+      {exerciseId:'fw',    exerciseType:'carry',    sets:3,reps:0, weight:20, distance:30,duration:0, rest:75,  rpe:'',   warmup:0, notes:"Farmer's walk — 30–40m per serie. Progressione: +2,5kg e +5m. Recupero 60–90s.", increments:INC(2.5,0,0,5)},
     ]
   },
   // ── MARTEDÌ — LOWER + CORE ───────────────────────────────────────────
@@ -3676,7 +3839,7 @@ function defaultProgramTemplates() {
       {exerciseId:'pu0',    exerciseType:'bodyweight',allowWeight:true, sets:2,reps:6, weight:0, distance:0, duration:0, rest:75, rpe:'', warmup:0, notes:'Push-up — progressione 6→7→8+. Recupero 60–90s. Flag "carico aggiuntivo" per le zavorre.', increments:INC(2.5,0,1)},
       {exerciseId:'facepull',exerciseType:'strength',sets:2,reps:8, weight:15, distance:0, duration:0, rest:60,  rpe:'',  warmup:0, notes:'Face pull — progressione 8→10→12 rip. Recupero 60s.', increments:INC(2.5,0,1)},
       // Carry
-      {exerciseId:'sc2',    exerciseType:'carry',    sets:3,reps:0, weight:16, distance:20,duration:0, rest:75,  rpe:'',  warmup:0, notes:'Suitcase carry — 20–30m per lato. Recupero 60–90s.', increments:INC(2,0,0)},
+      {exerciseId:'sc2',    exerciseType:'carry',    sets:3,reps:0, weight:16, distance:20,duration:0, rest:75,  rpe:'',  warmup:0, notes:'Suitcase carry — 20–30m per lato. Progressione: +2kg e +5m. Recupero 60–90s.', increments:INC(2,0,0,5)},
     ]
   },
   // ── SABATO — LOWER + CONDITIONING ─────────────────────────────────────
@@ -3786,9 +3949,9 @@ var misChartInstance = null;
 // Chart tabs. Mirrored measures (biceps/quads) are one tab that draws BOTH
 // sides, otherwise the left column of the measurement modal is invisible.
 var MIS_CHART_GROUPS = [
-  {key:'weight',   label:'Peso',      unit:'kg', sides:false, fields:['weight']},
-  {key:'chest',    label:'Petto',     unit:'cm', sides:false, fields:['chest']},
-  {key:'abdomen',  label:'Addome',    unit:'cm', sides:false, fields:['abdomen']},
+  {key:'weight',   label:'Peso',      unit:'kg', sides:false, fields:[{key:'weight'}]},
+  {key:'chest',    label:'Petto',     unit:'cm', sides:false, fields:[{key:'chest'}]},
+  {key:'abdomen',  label:'Addome',    unit:'cm', sides:false, fields:[{key:'abdomen'}]},
   {key:'bicep',    label:'Bicipite',  unit:'cm', sides:true,
    fields:[{key:'rightBicep', label:'Bicipite dx', color:'#e8ff47'},
            {key:'leftBicep',  label:'Bicipite sx', color:'#1e90ff'}]},
@@ -3798,8 +3961,20 @@ var MIS_CHART_GROUPS = [
 ];
 var MIS_CHART_COLORS = ['#e8ff47','#1e90ff','#ff6b35','#a855f7','#2ed573'];
 
+// Ogni entry di fields deve avere .key: con fields:['weight'] la chiave risultava
+// undefined, la riga data veniva scartata e il grafico restava vuoto.
+// Normalizziamo qui così un campo scritto come stringa resta comunque valido.
 function misChartGroup() {
-  return MIS_CHART_GROUPS.find(function(g){ return g.key===misChartField; }) || MIS_CHART_GROUPS[0];
+  var g = MIS_CHART_GROUPS.find(function(x){ return x.key===misChartField; }) || MIS_CHART_GROUPS[0];
+  var fields = g.fields.map(function(f){ return typeof f === 'string' ? {key:f} : f; });
+  return {key:g.key, label:g.label, unit:g.unit, sides:g.sides, fields:fields};
+}
+
+// Primo valore valido per una data, così due misurazioni nello stesso giorno
+// (una vecchia senza quel campo, una nuova con) non si cancellano a vicenda.
+function misPickRow(rows, key) {
+  for (var i=0;i<rows.length;i++) if (rows[i][key]!=null) return rows[i];
+  return rows[0] || null;
 }
 
 function misUnit(key) {
@@ -3883,14 +4058,12 @@ function renderMisChart() {
 
   // One shared date axis so mirrored lines stay aligned; missing values are null
   var sorted = state.misurazioni.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
-  var dates = [];
-  var seen = {};
-  sorted.forEach(function(m){
-    if (seen[m.date]) return;
-    var any = group.fields.some(function(f){ return m[f.key]!=null; });
-    if (!any) return;
-    seen[m.date]=true;
-    dates.push(m.date);
+  var byDate = {};
+  sorted.forEach(function(m){ (byDate[m.date] = byDate[m.date] || []).push(m); });
+  var dates = Object.keys(byDate).sort().filter(function(d){
+    return byDate[d].some(function(m){
+      return group.fields.some(function(f){ return m[f.key]!=null; });
+    });
   });
   var labels = dates.map(function(d){ return new Date(d).toLocaleDateString('it-IT',{day:'numeric',month:'short'}); });
 
@@ -3899,7 +4072,7 @@ function renderMisChart() {
     return {
       label: f.label || group.label,
       data: dates.map(function(d){
-        var row = sorted.find(function(m){ return m.date===d; });
+        var row = misPickRow(byDate[d], f.key);
         return (row && row[f.key]!=null) ? row[f.key] : null;
       }),
       borderColor: color,
