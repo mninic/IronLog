@@ -3520,7 +3520,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.3';
+var APP_VERSION = '4.3.4';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3530,6 +3530,8 @@ function renderAppDiag() {
     var vv = window.visualViewport;
     var locked = getComputedStyle(document.documentElement).getPropertyValue('--app-height').trim() || '?';
     var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ? 'PWA installata' : 'browser';
+    var fullMode = (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) ? 'fullscreen' : (
+      (window.matchMedia && window.matchMedia('(display-mode: minimal-ui)').matches) ? 'minimal-ui' : standalone);
     var layoutH = document.documentElement ? document.documentElement.clientHeight : '?';
     var nav = document.querySelector('.navbar');
     var gapV = '?', gapL = '?';
@@ -3540,12 +3542,14 @@ function renderAppDiag() {
       gapL = Math.round(layoutH - r.bottom) + 'px';
     }
     el.innerHTML =
-      'Modalità: <b style="color:var(--text)">' + standalone + '</b><br>' +
+      'Modalità: <b style="color:var(--text)">' + fullMode + '</b><br>' +
       'Finestra: ' + window.innerWidth + '×' + window.innerHeight +
       (vv ? ' · visibile: ' + Math.round(vv.width) + '×' + Math.round(vv.height) +
         ' · scala ' + (vv.scale || 1) + ' · offTop ' + Math.round(vv.offsetTop || 0) : ' · visualViewport n/d') + '<br>' +
       'Layout: ' + (document.documentElement ? document.documentElement.clientWidth + '×' + layoutH : 'n/d') +
-      ' · schermo: ' + (window.screen ? window.screen.width + '×' + window.screen.height : 'n/d') + '<br>' +
+      ' · schermo: ' + (window.screen ? window.screen.width + '×' + window.screen.height : 'n/d') +
+      ' · utile: ' + (window.screen ? (window.screen.availWidth + '×' + window.screen.availHeight + '+' + (window.screen.availTop || 0)) : 'n/d') +
+      ' · esterna: ' + (window.outerWidth || '?') + '×' + (window.outerHeight || '?') + '<br>' +
       'Altezza app bloccata: <b style="color:var(--text)">' + locked + '</b><br>' +
       'Spazio sotto navbar: <b style="color:var(--text)">' + gapV + '</b> (vs visibile), ' +
       '<b style="color:var(--text)">' + gapL + '</b> (vs layout: deve essere ≤0)<br>' +
