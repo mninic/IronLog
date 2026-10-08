@@ -3520,7 +3520,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.2';
+var APP_VERSION = '4.3.3';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3530,20 +3530,25 @@ function renderAppDiag() {
     var vv = window.visualViewport;
     var locked = getComputedStyle(document.documentElement).getPropertyValue('--app-height').trim() || '?';
     var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ? 'PWA installata' : 'browser';
+    var layoutH = document.documentElement ? document.documentElement.clientHeight : '?';
     var nav = document.querySelector('.navbar');
-    var gap = '?';
+    var gapV = '?', gapL = '?';
     if (nav) {
       var r = nav.getBoundingClientRect();
-      var base = (vv && vv.height) ? vv.height : window.innerHeight;
-      gap = Math.round(base - r.bottom) + 'px';
+      var baseV = (vv && vv.height) ? vv.height : window.innerHeight;
+      gapV = Math.round(baseV - r.bottom) + 'px';
+      gapL = Math.round(layoutH - r.bottom) + 'px';
     }
     el.innerHTML =
       'Modalità: <b style="color:var(--text)">' + standalone + '</b><br>' +
       'Finestra: ' + window.innerWidth + '×' + window.innerHeight +
-      (vv ? ' · visibile: ' + Math.round(vv.width) + '×' + Math.round(vv.height) : ' · visualViewport n/d') + '<br>' +
+      (vv ? ' · visibile: ' + Math.round(vv.width) + '×' + Math.round(vv.height) +
+        ' · scala ' + (vv.scale || 1) + ' · offTop ' + Math.round(vv.offsetTop || 0) : ' · visualViewport n/d') + '<br>' +
+      'Layout: ' + (document.documentElement ? document.documentElement.clientWidth + '×' + layoutH : 'n/d') +
+      ' · schermo: ' + (window.screen ? window.screen.width + '×' + window.screen.height : 'n/d') + '<br>' +
       'Altezza app bloccata: <b style="color:var(--text)">' + locked + '</b><br>' +
-      'Spazio sotto navbar: <b style="color:var(--text)">' + gap + '</b>' +
-      ' (deve essere 0 o pochi px)<br>' +
+      'Spazio sotto navbar: <b style="color:var(--text)">' + gapV + '</b> (vs visibile), ' +
+      '<b style="color:var(--text)">' + gapL + '</b> (vs layout: deve essere ≤0)<br>' +
       'DPR: ' + (window.devicePixelRatio || '?') +
       ' · UA: ' + (navigator.userAgent || '').slice(0, 60) + '…';
   } catch (e) { el.textContent = 'n/d'; }
@@ -4419,12 +4424,18 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
   var keyboardOpen = false;
 
   function measureHeight() {
-    // visualViewport e' l'altezza VERA visibile: su iOS segue le toolbar di
-    // Safari che compaiono/scompaiono (innerHeight invece resta fermo e non
-    // genera nemmeno un resize). Senza, l'app resta piu' corta dello schermo
-    // e sotto resta una banda vuota.
-    if (window.visualViewport && window.visualViewport.height) return window.visualViewport.height;
-    return window.innerHeight;
+    // Prende il MASSIMO tra le altezze candidate. Perche': su iOS la
+    // visualViewport puo' essere piu' corta del layout reale (PWA Chrome:
+    // 812 misurati contro 874 dipinti): bloccarsi sul valore corto lascia
+    // una banda body sotto la navbar pur con gap misurato a 0.
+    // Il layout viewport (clientHeight) e' cio' che il body dipinge davvero.
+    // Con la tastiera aperta NON si passa di qui (guard keyboardOpen nei
+    // chiamanti): la tastiera restringe solo, e il max terrebbe il vecchio.
+    var cands = [window.innerHeight || 0];
+    if (window.visualViewport && window.visualViewport.height) cands.push(window.visualViewport.height);
+    var de = document.documentElement ? document.documentElement.clientHeight : 0;
+    if (de) cands.push(de);
+    return Math.max.apply(null, cands);
   }
 
   function lockHeight() {
