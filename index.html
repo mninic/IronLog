@@ -103,7 +103,7 @@ select.input{appearance:none}
 .workout-card-meta{display:flex;gap:10px;flex-wrap:wrap}
 .workout-card-tag{font-size:12px;color:var(--text2)}
 
-.session-header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 20px;position:sticky;top:0;z-index:10;margin-top:calc(-16px - var(--safe-top));padding-top:calc(16px + var(--safe-top))}
+.session-header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 20px;margin-top:calc(-16px - var(--safe-top));padding-top:calc(16px + var(--safe-top))}
 .session-timer{font-size:48px;font-weight:900;color:var(--accent);line-height:1}
 
 .exercise-section{margin:12px 16px}
@@ -129,6 +129,8 @@ select.input{appearance:none}
 .sets-actions .btn:last-child{border-right:none}
 
 .timer-rest{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-top:8px;display:flex;align-items:center;gap:12px}
+/* barra recupero fissa in basso: resta visibile senza coprire gli esercizi */
+#rest-timer-bar{position:fixed;left:12px;right:12px;bottom:calc(78px + var(--safe-bot));z-index:900;margin-top:0;box-shadow:0 8px 32px rgba(0,0,0,0.55)}
 .timer-disp{font-size:34px;font-weight:900;color:var(--green);min-width:70px}
 .timer-bar{flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden}
 .timer-bar-fill{height:100%;background:var(--green);border-radius:3px;transition:width 1s linear}
@@ -250,14 +252,6 @@ select.input{appearance:none}
           <div class="session-timer" id="session-timer">00:00</div>
           <div style="font-size:13px;color:var(--text2)" id="session-name-display">Allenamento</div>
         </div>
-      </div>
-      <div id="rest-timer-bar" style="display:none" class="timer-rest mt-8">
-        <div>
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Recupero</div>
-          <div class="timer-disp" id="rest-display">2:00</div>
-        </div>
-        <div class="timer-bar"><div class="timer-bar-fill" id="rest-bar-fill" style="width:100%"></div></div>
-        <button class="btn btn-sm btn-ghost" onclick="skipRest()">Salta</button>
       </div>
     </div>
     <div id="session-exercises" style="padding-bottom:16px"></div>
@@ -424,6 +418,16 @@ select.input{appearance:none}
 </div>
 
 <!-- NAVBAR -->
+<!-- barra recupero fissa in basso: visibile senza coprire gli esercizi -->
+<div id="rest-timer-bar" style="display:none" class="timer-rest">
+  <div>
+    <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Recupero</div>
+    <div class="timer-disp" id="rest-display">2:00</div>
+  </div>
+  <div class="timer-bar"><div class="timer-bar-fill" id="rest-bar-fill" style="width:100%"></div></div>
+  <button class="btn btn-sm btn-ghost" onclick="skipRest()">Salta</button>
+</div>
+
 <nav class="navbar">
   <div class="nav-item active" onclick="showPage('home')" id="nav-home"><div class="nav-icon">🏠</div><div class="nav-label">HOME</div></div>
   <div class="nav-item" onclick="showPage('allenamento')" id="nav-allenamento"><div class="nav-icon">⚡</div><div class="nav-label">ALLENA</div></div>
@@ -1779,7 +1783,13 @@ function _restoreActiveSession() {
         restSecondsMax = p.restSecondsMax;
         var remaining = Math.ceil((restEndTime - Date.now()) / 1000);
         if (remaining > 0) { restSecondsLeft = remaining; _scheduleRestTimer(); }
-        else { restEndTime = null; }
+        else {
+          // recupero scaduto ad app chiusa: avvisa subito alla riapertura
+          restEndTime = null;
+          saveState();
+          showToast('Recupero terminato! 💪');
+          notifyRestDone();
+        }
       }
     }
   } catch(e) {}
@@ -2720,12 +2730,14 @@ function startSessionFromTemplate(idx) {
   var t = state.templates[idx];
   state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(buildSessionExercise)};
   startSessionTimer();
+  requestWakeLock();
   showPage('allenamento');
 }
 
 function startBlankSession() {
   state.activeSession = {name:'Sessione libera', templateIdx:null, startTime:Date.now(), exercises:[]};
   startSessionTimer();
+  requestWakeLock();
   showPage('allenamento');
   setTimeout(function(){openExercisePicker('session');},300);
 }
@@ -3045,6 +3057,35 @@ function saveSI() {
   navigator.serviceWorker.register('sw.js').catch(function(){});
 })();
 
+// WAKE LOCK — tiene lo schermo acceso durante l'allenamento.
+// A schermo spento il browser sospende i timer della pagina: la scadenza del
+// recupero scatterebbe solo alla riapertura, e la notifica arriverebbe tardi.
+// Con il wake lock il telefono non si blocca da solo in palestra.
+// Va richiesto dentro un gesto utente (gli avvii di sessione lo sono) e dove
+// non supportato non fa niente. Si rilascia a fine sessione.
+var wakeLock = null;
+function requestWakeLock() {
+  try {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+    var p = navigator.wakeLock.request('screen');
+    if (p && p.then) p.then(function(lock){ wakeLock = lock; }, function(){ wakeLock = null; });
+  } catch (e) { wakeLock = null; }
+}
+function releaseWakeLock() {
+  try {
+    if (wakeLock) {
+      var r = wakeLock.release();
+      if (r && r.catch) r.catch(function(){});
+    }
+  } catch (e) {}
+  wakeLock = null;
+}
+// Il lock si perde quando la pagina va in background: alla riapertura,
+// se c'e' ancora una sessione attiva, lo si richiede di nuovo.
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && state && state.activeSession) requestWakeLock();
+});
+
 // Il permesso va chiesto dentro un gesto utente: il primo avvio del recupero
 // e' il momento giusto, un tentativo a vuoto all'avvio farebbe solo apparire
 // "notifiche bloccate" nel browser.
@@ -3153,6 +3194,8 @@ document.addEventListener('visibilitychange', function() {
       skipRest();
       showToast('Recupero terminato! 💪');
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      // scaduto mentre eri via: notifica subito invece di restare in silenzio
+      notifyRestDone();
     } else {
       restSecondsLeft = remaining;
       updateRestDisplay();
@@ -3171,6 +3214,7 @@ function confirmFinishSession() {
   if (!state.activeSession) return;
   clearInterval(sessionTimerInterval);
   skipRest();
+  releaseWakeLock();
   var duration = Math.floor((Date.now()-state.activeSession.startTime)/1000);
   var totalVolume=0, totalSets=0;
   var exercises = state.activeSession.exercises.map(function(ex){
@@ -4275,6 +4319,17 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
     if (!keyboardOpen) {
       setTimeout(lockHeight, 50);
     }
+  });
+
+  // Rimisura quando la pagina torna in primo piano: in PWA standalone e con
+  // le barre del browser che compaiono/scompaiono l'altezza utile cambia tra
+  // un avvio e l'altro, e il valore bloccato al primo load resterebbe corto
+  // (banda nera in fondo) o lungo. Mai con la tastiera aperta.
+  window.addEventListener('pageshow', function() {
+    if (!keyboardOpen) setTimeout(lockHeight, 50);
+  });
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && !keyboardOpen) setTimeout(lockHeight, 50);
   });
 })();
 
