@@ -26,7 +26,7 @@
   --safe-bot:env(safe-area-inset-bottom,0px);
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html{height:100%;overflow:hidden}
+html{height:100%;overflow:hidden;background:var(--bg)}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased;position:fixed;width:100%}
 
 .app{display:flex;flex-direction:column;position:fixed;top:0;left:0;right:0;width:100%;height:var(--app-height,100dvh)}
@@ -336,6 +336,9 @@ select.input{appearance:none}
     <div style="font-size:13px;color:var(--text2);line-height:1.8" id="app-diag">…</div>
     <div style="font-size:11px;color:var(--text3);margin-top:8px">IronLog v<span id="app-version">…</span></div>
   </div>
+  <!-- sonde diagnostica: misurano 100dvh e safe-area reali del dispositivo -->
+  <div id="probe-dvh" style="position:fixed;top:0;left:0;width:0;height:100dvh;visibility:hidden;pointer-events:none"></div>
+  <div id="probe-safe" style="position:fixed;top:0;left:0;width:0;height:0;padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none"></div>
   <div style="height:20px"></div>
 </div>
 
@@ -3520,7 +3523,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.4';
+var APP_VERSION = '4.3.5';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3534,13 +3537,28 @@ function renderAppDiag() {
       (window.matchMedia && window.matchMedia('(display-mode: minimal-ui)').matches) ? 'minimal-ui' : standalone);
     var layoutH = document.documentElement ? document.documentElement.clientHeight : '?';
     var nav = document.querySelector('.navbar');
-    var gapV = '?', gapL = '?';
+    var gapV = '?', gapL = '?', navInfo = '?';
     if (nav) {
       var r = nav.getBoundingClientRect();
       var baseV = (vv && vv.height) ? vv.height : window.innerHeight;
       gapV = Math.round(baseV - r.bottom) + 'px';
       gapL = Math.round(layoutH - r.bottom) + 'px';
+      navInfo = 'top ' + Math.round(r.top) + ' · fondo ' + Math.round(r.bottom) + ' · h ' + Math.round(r.height);
     }
+    var probeDvh = '?', probeSafe = '?';
+    try {
+      var pd = document.getElementById('probe-dvh');
+      if (pd) probeDvh = Math.round(pd.getBoundingClientRect().height) + 'px';
+      var ps = document.getElementById('probe-safe');
+      if (ps) probeSafe = getComputedStyle(ps).paddingBottom;
+    } catch (e2) {}
+    var docInfo = '?', bodyInfo = '?';
+    try {
+      var de2 = document.documentElement;
+      docInfo = 'scrollH ' + de2.scrollHeight;
+      var br = document.body.getBoundingClientRect();
+      bodyInfo = 'fondo ' + Math.round(br.bottom) + ' · h ' + Math.round(br.height);
+    } catch (e3) {}
     el.innerHTML =
       'Modalità: <b style="color:var(--text)">' + fullMode + '</b><br>' +
       'Finestra: ' + window.innerWidth + '×' + window.innerHeight +
@@ -3553,6 +3571,9 @@ function renderAppDiag() {
       'Altezza app bloccata: <b style="color:var(--text)">' + locked + '</b><br>' +
       'Spazio sotto navbar: <b style="color:var(--text)">' + gapV + '</b> (vs visibile), ' +
       '<b style="color:var(--text)">' + gapL + '</b> (vs layout: deve essere ≤0)<br>' +
+      'Navbar: ' + navInfo + ' · doc: ' + docInfo + ' · body: ' + bodyInfo + '<br>' +
+      '100dvh reale: <b style="color:var(--text)">' + probeDvh + '</b>' +
+      ' · safe-bottom: <b style="color:var(--text)">' + probeSafe + '</b><br>' +
       'DPR: ' + (window.devicePixelRatio || '?') +
       ' · UA: ' + (navigator.userAgent || '').slice(0, 60) + '…';
   } catch (e) { el.textContent = 'n/d'; }
