@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="IronLog">
 <meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>IronLog</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -268,8 +271,7 @@ select.input{appearance:none}
     <div class="page-subtitle">Le tue schede di allenamento</div>
   </div>
   <div style="padding:0 16px;margin-bottom:16px">
-    <button class="btn btn-secondary btn-full" onclick="importDefaultProgram()">📥 Programma corpo funzionale (4 giorni)</button>
-    <button class="btn btn-primary btn-full" style="margin-top:8px" onclick="openCreateTemplate()">+ Nuovo template</button>
+    <button class="btn btn-primary btn-full" onclick="openCreateTemplate()">+ Nuovo template</button>
   </div>
   <div id="template-list"></div>
 </div>
@@ -1114,9 +1116,12 @@ function decideProgressionAction(r) {
   return 'progress';
 }
 
-// Config dell'esercizio dentro un template (o null se non e' in nessuna scheda)
-function findTemplateExercise(exId) {
+// Config dell'esercizio dentro un template (o null se non e' in nessun template).
+// Con templateIdx si punta a un template preciso: serve quando un esercizio
+// compare in piu' schede e bisogna aggiornarne solo una.
+function findTemplateExercise(exId, templateIdx) {
   for (var i=0;i<state.templates.length;i++) {
+    if (templateIdx!=null && i!==templateIdx) continue;
     var list = state.templates[i].exercises||[];
     for (var j=0;j<list.length;j++) {
       if (list[j].exerciseId===exId) return {templateIdx:i, exIdx:j, cfg:list[j], template:state.templates[i]};
@@ -1126,9 +1131,9 @@ function findTemplateExercise(exId) {
 }
 
 // Dove trovare i valori attuali: template se presente, altrimenti ultima sessione
-function currentPrescription(exId) {
+function currentPrescription(exId, templateIdx) {
   var isCarry = getExerciseType(exId)==='carry';
-  var found = findTemplateExercise(exId);
+  var found = findTemplateExercise(exId, templateIdx);
   // per i carry 'reps' ospita i metri: serve solo ai calcoli interni della scheda
   if (found) return {found:found, cfg:found.cfg, weight:snapWeight(found.cfg.weight), sets:found.cfg.sets||0, reps:isCarry?(found.cfg.distance||0):(found.cfg.reps||0), rest:found.cfg.rest||0};
   var log = exerciseLog(exId);
@@ -1139,8 +1144,8 @@ function currentPrescription(exId) {
 // Passo di progressione: +carico, si riparte dal minimo della progressione.
 // Il salto resta sempre multiplo di 0,5 kg (vedi WEIGHT_STEP).
 // I carry aggiungono anche il passo in metri.
-function progressionPrescription(exId) {
-  var p = currentPrescription(exId);
+function progressionPrescription(exId, templateIdx) {
+  var p = currentPrescription(exId, templateIdx);
   var ladder = getRepProgression(exId);
   var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
@@ -1166,8 +1171,8 @@ function progressionPrescription(exId) {
 
 // Deload: -30% carico, -50% serie, rep verso la meta' della progressione.
 // Sui carry la distanza resta invariata: lo scarico riguarda carico e serie.
-function deloadPrescription(exId) {
-  var p = currentPrescription(exId);
+function deloadPrescription(exId, templateIdx) {
+  var p = currentPrescription(exId, templateIdx);
   var ladder = getRepProgression(exId);
   var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
@@ -1186,17 +1191,20 @@ function deloadPrescription(exId) {
 }
 
 // Applica il consiglio al template che contiene l'esercizio
-function applyProgressionAdvice(exId, action) {
+function applyProgressionAdvice(exId, action, templateIdx) {
   var r = analyzeExerciseProgress(exId);
   if (!r) return;
-  var p = currentPrescription(exId);
-  if (!p.found) { showToast('Aggiungi prima l\'esercizio a un template'); return; }
+  var p = currentPrescription(exId, templateIdx);
+  // il consiglio viene generato solo dagli esercizi presenti in un template,
+  // ma il template puo' essere stato cancellato nel frattempo
+  if (!p.found) { showToast('Esercizio non presente nel template'); return; }
 
   var isDeload = (action==='deload');
-  var presc = isDeload ? deloadPrescription(exId) : progressionPrescription(exId);
+  var presc = isDeload ? deloadPrescription(exId, templateIdx) : progressionPrescription(exId, templateIdx);
   var cfg = p.found.cfg;
   var isCarry = getExerciseType(exId)==='carry';
   var unit = isCarry ? 'm' : ' rip';
+  var tplName = p.found.template ? p.found.template.name : '';
 
   cfg.sets = presc.sets;
   // sui carry la progressione e' in METRI: si aggiorna la distanza, non le reps
@@ -1207,12 +1215,12 @@ function applyProgressionAdvice(exId, action) {
 
   if (isDeload) {
     cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'×'+presc.reps+unit+'. Tieni RPE 6-7, poi torna al carico pieno.';
-    showToast('Deload applicato a '+r.name);
+    showToast('Deload su "'+tplName+'": '+r.name);
   } else {
     // per i carry si parte dai metri nuovi, non si riparte dal minimo della ladder
     var nextVal = isCarry ? presc.distance : presc.reps;
     cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+nextVal+unit+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
-    showToast('Progressione aggiornata: '+r.name+' '+presc.loadLabel);
+    showToast('Progressione su "'+tplName+'": '+r.name+' '+presc.loadLabel);
   }
   saveState();
   renderTemplates();
@@ -1220,20 +1228,32 @@ function applyProgressionAdvice(exId, action) {
   renderProgressionAdvisor();
 }
 
-// Elenco dei consigli, deload prima
+// Elenco dei consigli, deload prima.
+// Si parte dai TEMPLATE e non dalle sessioni: un esercizio che non e' in
+// nessuna scheda non ha dove applicare il passo, quindi non viene proposto.
+// Se lo stesso esercizio vive in piu' schede esce una riga per ognuna e
+// ciascuna riga aggiorna il solo template di riferimento.
 function getProgressionAdvice() {
-  var ids = {};
-  (state.sessions||[]).forEach(function(s){
-    (s.exercises||[]).forEach(function(e){ if (e.exerciseId) ids[e.exerciseId]=true; });
+  var templates = state.templates || [];
+  var keys = {};
+  templates.forEach(function(t, ti){
+    (t.exercises||[]).forEach(function(e){ if (e && e.exerciseId) keys[e.exerciseId+'|'+ti]=true; });
   });
   var out = [];
-  Object.keys(ids).forEach(function(id){
+  Object.keys(keys).forEach(function(k){
+    var sep = k.lastIndexOf('|');
+    var id = k.slice(0, sep), ti = parseInt(k.slice(sep+1), 10);
     var r = analyzeExerciseProgress(id);
-    if (r && r.action) out.push(r);
+    if (!r || !r.action) return;
+    r.templateIdx = ti;
+    r.templateName = templates[ti] ? (templates[ti].name || '') : '';
+    out.push(r);
   });
   out.sort(function(a,b){
     if (a.action!==b.action) return a.action==='deload' ? -1 : 1;
-    return b.daysSince - a.daysSince;
+    if (b.daysSince !== a.daysSince) return b.daysSince - a.daysSince;
+    if (a.name !== b.name) return a.name.localeCompare(b.name);
+    return String(a.templateName||'').localeCompare(String(b.templateName||''));
   });
   return out;
 }
@@ -1275,7 +1295,7 @@ function renderProgressionAdvisor() {
 
   list.forEach(function(r){
     var isDeload = r.action==='deload';
-    var presc = isDeload ? deloadPrescription(r.exerciseId) : progressionPrescription(r.exerciseId);
+    var presc = isDeload ? deloadPrescription(r.exerciseId, r.templateIdx) : progressionPrescription(r.exerciseId, r.templateIdx);
     var color = isDeload ? 'var(--green)' : 'var(--accent)';
     var tag = isDeload ? 'DELOAD' : 'PROGRESSI';
     var title = isDeload ? 'Tetto raggiunto, scarica' : 'Aumenta il carico';
@@ -1289,18 +1309,19 @@ function renderProgressionAdvisor() {
 
     html += '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">'+
       '<div class="flex justify-between items-center" style="margin-bottom:5px">'+
-        '<div style="font-size:14px;font-weight:700;color:var(--text)">'+(r.icon||'')+' '+r.name+'</div>'+
+        '<div style="font-size:14px;font-weight:700;color:var(--text)">'+(r.icon||'')+' '+r.name+
+          (r.templateName?'<div style="font-size:10px;font-weight:600;color:var(--text3);margin-top:2px">scheda: '+r.templateName+'</div>':'')+'</div>'+
         '<div style="font-size:10px;font-weight:800;letter-spacing:0.5px;padding:2px 7px;border-radius:20px;background:'+color+';color:#000">'+tag+'</div>'+
       '</div>'+
       '<div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+body+'</div>'+
       '<div class="flex gap-8">'+
-        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
+        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\','+r.templateIdx+')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
         '<button class="btn btn-xs btn-secondary" onclick="showPage(\'template\')">Apri scheda</button>'+
       '</div></div>';
   });
 
   host.innerHTML = '<div class="section-header" style="margin-top:16px"><div class="section-title">Progressione &amp; Deload</div></div>'+
-    '<div style="padding:0 16px"><div style="font-size:12px;color:var(--text3);margin-bottom:10px">Controlla gli esercizi che hanno chiuso la progressione e applica il passo consigliato con un tocco.</div>'+html+'</div>';
+    '<div style="padding:0 16px"><div style="font-size:12px;color:var(--text3);margin-bottom:10px">Solo esercizi presenti in una scheda: se non sono in nessun template non c\'e\' dove applicare il passo. Applica il consiglio con un tocco e la scheda viene aggiornata lì.</div>'+html+'</div>';
 }
 
 // exerciseType governs which inputs are shown in the set row:
@@ -3011,6 +3032,60 @@ function saveSI() {
   showToast('Progressione aggiornata');
 }
 
+// ============================================================
+// PWA — service worker + notifiche di recupero
+// ============================================================
+// Registrato appena lo script gira: serve sia per installare la PWA sia per
+// usare registration.showNotification(), l'unico modo di notificare che
+// funziona dentro una PWA installata su Android (new Notification e' vietato).
+(function registerServiceWorker(){
+  if (!('serviceWorker' in navigator)) return;
+  var proto = location.protocol;
+  if (proto !== 'https:' && proto !== 'http:') return;   // file:// niente SW
+  navigator.serviceWorker.register('sw.js').catch(function(){});
+})();
+
+// Il permesso va chiesto dentro un gesto utente: il primo avvio del recupero
+// e' il momento giusto, un tentativo a vuoto all'avvio farebbe solo apparire
+// "notifiche bloccate" nel browser.
+function ensureNotificationPermission() {
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  // 'default': siamo dentro un gesto utente, e' il momento giusto per chiedere.
+  // Il risultato arriva via callback, qui ci basta sapere che non e' bloccato.
+  function onGrant(res){ if (res === 'granted') showToast('Notifiche recupero attivate'); }
+  try {
+    var p = Notification.requestPermission(onGrant);
+    if (p && p.then) p.then(onGrant);
+  } catch (e) {}
+  return true;
+}
+
+// Notifica di fine recupero. Prima si prova il service worker, poi si
+// ricade su new Notification(): il tag la tiene sola, così a ogni serie
+// non si accumula una pila di notifiche.
+function notifyRestDone() {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  var title = 'IronLog — Recupero terminato!';
+  var opts = {
+    body: 'Pronto per la prossima serie 💪',
+    tag: 'ironlog-rest',
+    renotify: true,
+    icon: 'icon-192.png',
+    badge: 'icon-192.png'
+  };
+  function fallback(){ try { new Notification(title, opts); } catch (e) {} }
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+    navigator.serviceWorker.getRegistration().then(function(reg){
+      if (reg && reg.showNotification) reg.showNotification(title, opts).catch(fallback);
+      else fallback();
+    }).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
 // Rest timer — background-aware: uses absolute end timestamp
 function startRestTimer(seconds) {
   if (restTimerInterval) clearInterval(restTimerInterval);
@@ -3021,12 +3096,8 @@ function startRestTimer(seconds) {
   updateRestDisplay();
   saveState(); // persist end time immediately
   _scheduleRestTimer();
-  // Show notification when rest ends (if supported)
-  if ('Notification' in window && Notification.permission === 'granted') {
-    // scheduled via timeout below
-  } else if ('Notification' in window && Notification.permission !== 'denied') {
-    Notification.requestPermission();
-  }
+  // Primo recupero della sessione: chiedi il permesso di notificare
+  ensureNotificationPermission();
 }
 
 function _scheduleRestTimer() {
@@ -3044,10 +3115,8 @@ function _scheduleRestTimer() {
       showToast('Recupero terminato! 💪');
       // Vibrate on mobile
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-      // Notification if app was in background
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('IronLog — Recupero terminato!', {body:'Pronto per la prossima serie 💪', icon:''});
-      }
+      // Notifica push: arriva anche con la scheda in background
+      notifyRestDone();
     } else {
       updateRestDisplay();
     }
