@@ -889,7 +889,6 @@ const REP_PROGRESSIONS = {
   'Potenza':         [4, 5, 6],   // lanci/salti: poche rip, qualità del movimento
   'Core':            [8, 10, 12],
   'Carry':           [8, 10, 12],
-  'Cardio':          [8, 10, 12],
 };
 const DEFAULT_REP_PROGRESSION = [8, 10, 12];
 
@@ -901,6 +900,22 @@ const CARRY_DISTANCE_PROGRESSIONS = {
 };
 const DEFAULT_CARRY_DISTANCE_PROGRESSION = [20, 30, 40];
 const CARRY_DEFAULT_DIST_STEP = 5;
+
+// Il cardio si progressa in MINUTI, non in ripetizioni.
+// I delta restano salvati in increments.reps (compatibile con dati e cloud
+// esistenti): lì il numero significa minuti, non ripetizioni.
+const CARDIO_DURATION_PROGRESSIONS = {
+  cardio: [20, 25, 30, 35, 40],
+  rowing: [20, 25, 30, 35, 40],
+  bike:   [20, 25, 30, 35, 40],
+  run:    [20, 25, 30, 35, 40],
+};
+const DEFAULT_CARDIO_DURATION_PROGRESSION = [15, 20, 25, 30];
+
+function getCardioProgression(exId) {
+  if (exId && CARDIO_DURATION_PROGRESSIONS[exId]) return CARDIO_DURATION_PROGRESSIONS[exId];
+  return DEFAULT_CARDIO_DURATION_PROGRESSION;
+}
 
 // Per-exercise overrides — these win over the category default.
 // A single entry means the rep count is fixed (both selector buttons disabled).
@@ -921,12 +936,13 @@ function getCarryProgression(exId) {
   return DEFAULT_CARRY_DISTANCE_PROGRESSION;
 }
 
-// Ladder "giusta" per l'esercizio: METRI per i carry, ripetizioni per tutto il resto.
-// Tutti i call site (progressione in sessione, retro, advisor) passano da qui.
+// Ladder "giusta" per l'esercizio: MINUTI per il cardio, METRI per i carry,
+// ripetizioni per tutto il resto. Tutti i call site passano da qui.
 function getRepProgression(exId) {
   if (exId && EXERCISE_REP_PROGRESSIONS[exId]) return EXERCISE_REP_PROGRESSIONS[exId];
   var ex = exId ? allExercises().find(function(e){ return e.id === exId; }) : null;
   if (!ex) return DEFAULT_REP_PROGRESSION;
+  if (ex.exerciseType === 'cardio') return getCardioProgression(exId);
   if (ex.exerciseType === 'carry') return getCarryProgression(exId);
   return REP_PROGRESSIONS[ex.category] || DEFAULT_REP_PROGRESSION;
 }
@@ -975,11 +991,12 @@ function hasInc(inc) {
   return !!(inc && (inc.weight || inc.sets || inc.reps || inc.distance));
 }
 
-// Etichetta del selettore ripetizioni: per i carry la ladder e' in metri
+// Etichetta del selettore ripetizioni: carry in metri, cardio in minuti
 function repCellLabel(exId) {
-  return getExerciseType(exId)==='carry'
-    ? 'Distanza (m)'
-    : 'Rip. ('+getRepProgression(exId).join('→')+')';
+  var t = getExerciseType(exId);
+  if (t==='carry') return 'Distanza (m)';
+  if (t==='cardio') return 'Durata (min) ('+getRepProgression(exId).join('→')+')';
+  return 'Rip. ('+getRepProgression(exId).join('→')+')';
 }
 function buildRepSelector(inputId, reps, exId, onchangeExpr) {
   var progression = getRepProgression(exId);
@@ -2560,7 +2577,7 @@ function saveExerciseConfig() {
     exerciseType: exType,
     allowWeight:  cfgAllowWeight,
     sets:     parseInt(document.getElementById('cfg-sets').value)||3,
-    reps:     exType==='carry' ? 0
+    reps:     (exType==='carry'||exType==='cardio') ? 0
               : (parseInt(document.getElementById('cfg-reps') ? document.getElementById('cfg-reps').value : 0)||0),
     weight:   snapWeight(document.getElementById('cfg-weight') ? document.getElementById('cfg-weight').value : 0),
     distance: distEl ? (parseFloat(distEl.value)||30) : 0,
@@ -2798,11 +2815,13 @@ function renderSessionExercises() {
     var inc = normInc(ex.config.increments);
     var exType = ex.config.exerciseType || getExerciseType(ex.config.exerciseId);
     var isCarry = exType==='carry';
+    var isCardio = exType==='cardio';
     var nextParts = [];
     if (inc.weight) nextParts.push('<span class="'+(inc.weight>0?'nd-up':'nd-dn')+'">'+(inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg</span>');
     if (inc.sets) nextParts.push('<span class="'+(inc.sets>0?'nd-up':'nd-dn')+'">'+(inc.sets>0?'+':'')+inc.sets+' serie</span>');
     // il delta "reps" non esiste sui carry: lì la progressione e' in metri
     if (isCarry) { if (inc.distance) nextParts.push('<span class="'+(inc.distance>0?'nd-up':'nd-dn')+'">'+(inc.distance>0?'+':'')+inc.distance+'m</span>'); }
+    else if (isCardio) { if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' min</span>'); }
     else if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
     var wuCount = ex.config.warmup||0;
     var withWeight = cfgAllowsWeight(ex.config);
@@ -2884,11 +2903,13 @@ function renderSessionExercises() {
       '<div class="next-badge"><span class="nd-0">Prox:</span>'+(nextParts.length?nextParts.join(' '):'<span class="nd-0">nessuna modifica</span>')+
       '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
       (function(){
-        // la ladder dei carry e' in metri: l'etichetta deve dire "m", non "rip"
+        // la ladder dei carry e' in metri, quella del cardio in minuti
         var progression = getRepProgression(ex.config ? ex.config.exerciseId : null);
-        var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+(isCarry?'m':'')+'</span>';
+        var unit = isCarry ? 'm' : isCardio ? ' min' : '';
+        var label = isCarry ? 'distanza: ' : isCardio ? 'durata: ' : 'rip: ';
+        var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+unit+'</span>';
         var noteTxt = ex.config.notes ? '<span>'+ex.config.notes+'</span> · ' : '';
-        return '<div class="ex-note-bar">'+noteTxt+(isCarry?'distanza: ':'rip: ')+progStr+'</div>';
+        return '<div class="ex-note-bar">'+noteTxt+label+progStr+'</div>';
       })()+
       '</div>';
   }).join('')+
@@ -2926,7 +2947,15 @@ function changeSessionRest(exIdx, delta) {
 
 function toggleSet(exIdx,setIdx) {
   if (!state.activeSession) return;
-  var set = state.activeSession.exercises[exIdx].sets[setIdx];
+  var ex = state.activeSession.exercises[exIdx];
+  var set = ex.sets[setIdx];
+  var exType = (ex.config && ex.config.exerciseType) || getExerciseType(ex.config && ex.config.exerciseId);
+  // L'RPE è richiesto su tutte le righe che lo mostrano: tutto tranne il cardio,
+  // che per natura non ha un RPE. Se manca, la serie non può essere completata.
+  if (!set.done && exType !== 'cardio' && (set.rpe === '' || set.rpe == null)) {
+    showToast('Inserisci un RPE');
+    return;
+  }
   set.done = !set.done;
   if (set.done && set.type==='work') startRestTimer(state.activeSession.exercises[exIdx].config.rest||120);
   saveState();
@@ -2940,10 +2969,16 @@ function addSet(exIdx) {
   for (var i=sets.length-1;i>=0;i--){if(sets[i].type==='work'){last=sets[i];break;}}
   var aCfg = state.activeSession.exercises[exIdx].config;
   var aIsCarry = (aCfg.exerciseType || getExerciseType(aCfg.exerciseId)) === 'carry';
+  var aIsCardio = (aCfg.exerciseType || getExerciseType(aCfg.exerciseId)) === 'cardio';
   // i carry non hanno ripetizioni: la serie nuova eredita la distanza
-  sets.push(aIsCarry
-    ? {type:'work', reps:0, distance:last?(last.distance||0):(aCfg.distance||30), weight:last?last.weight:0, rpe:'', done:false}
-    : {type:'work', reps:last?last.reps:10, weight:last?last.weight:0, rpe:'', done:false});
+  // il cardio lavora in minuti: la serie nuova eredita la durata
+  if (aIsCarry) {
+    sets.push({type:'work', reps:0, distance:last?(last.distance||0):(aCfg.distance||30), weight:last?last.weight:0, rpe:'', done:false});
+  } else if (aIsCardio) {
+    sets.push({type:'work', reps:0, distance:0, duration:last?(last.duration||0):(aCfg.duration||20), weight:0, rpe:'', done:false});
+  } else {
+    sets.push({type:'work', reps:last?last.reps:10, weight:last?last.weight:0, rpe:'', done:false});
+  }
   saveState();
   renderSessionExercises();
 }
@@ -2979,11 +3014,12 @@ function changeSI(field,delta) {
   var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
   var exId = ex && ex.config ? ex.config.exerciseId : null;
   var isCarry = !!exId && getExerciseType(exId)==='carry';
+  var isCardio = !!exId && getExerciseType(exId)==='cardio';
   // sul carry la riga "reps" e' in realta' la distanza in metri
   if (field === 'reps' && isCarry) field = 'distance';
   if (field === 'reps' || field === 'distance') {
     var progression = getRepProgression(exId);
-    var current = getCurrentSIValue(ex, progression, isCarry);
+    var current = getCurrentSIValue(ex, progression, isCarry, isCardio);
     var acc = (field === 'distance') ? siIncrements.distance : siIncrements.reps;
     var newTarget = nextRep(current + acc, progression, delta);
     if (field === 'distance') siIncrements.distance = newTarget - current;
@@ -2997,14 +3033,17 @@ function changeSI(field,delta) {
   updateSIDisplay();
 }
 
-// Valore corrente su cui calcolare il delta: ripetizioni, o metri per i carry
-function getCurrentSIValue(ex, progression, isCarry) {
+// Valore corrente su cui calcolare il delta: ripetizioni, metri per i carry,
+// minuti per il cardio.
+function getCurrentSIValue(ex, progression, isCarry, isCardio) {
   if (!ex) return progression[0];
   var workSets = ex.sets ? ex.sets.filter(function(s){ return s.type==='work'; }) : [];
   var last = workSets.length ? workSets[workSets.length-1] : null;
   var v = last
-    ? (isCarry ? last.distance : last.reps)
-    : (isCarry ? (ex.config && ex.config.distance) : (ex.config && ex.config.reps));
+    ? (isCarry ? last.distance : isCardio ? last.duration : last.reps)
+    : (isCarry ? (ex.config && ex.config.distance)
+      : isCardio ? (ex.config && ex.config.duration)
+      : (ex.config && ex.config.reps));
   if (!isFinite(v) || !v) return progression[0];
   return v;
 }
@@ -3026,27 +3065,29 @@ function updateSIDisplay() {
   var ex = state.activeSession && siExIdx !== null ? state.activeSession.exercises[siExIdx] : null;
   var exId = ex && ex.config ? ex.config.exerciseId : null;
   var isCarry = !!exId && getExerciseType(exId)==='carry';
+  var isCardio = !!exId && getExerciseType(exId)==='cardio';
   // Hide the kg row when the exercise doesn't track weight (p.ej. trazioni senza zavorra)
   var wRow = document.getElementById('si-weight-row');
   if (wRow) wRow.style.display = cfgAllowsWeight(ex && ex.config ? ex.config : null) ? '' : 'none';
   var lbl = document.getElementById('si-reps-label');
-  if (lbl) lbl.textContent = isCarry ? 'Distanza (m)' : 'Ripetizioni';
+  if (lbl) lbl.textContent = isCarry ? 'Distanza (m)' : isCardio ? 'Durata (min)' : 'Ripetizioni';
   var progression = getRepProgression(exId);
   var acc = isCarry ? (siIncrements.distance||0) : (siIncrements.reps||0);
-  var current = getCurrentSIValue(ex, progression, isCarry);
+  var current = getCurrentSIValue(ex, progression, isCarry, isCardio);
   var targetReps = snapToProgression(current + acc, progression);
   var isMin = targetReps <= progression[0], isMax = targetReps >= progression[progression.length-1];
+  var unit = isCarry ? 'm' : isCardio ? ' min' : '';
   var repsRow = document.getElementById('si-reps-row');
   if (repsRow) {
     repsRow.innerHTML =
       '<button class="inc-btn" '+(isMin?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',-1)">−</button>'+
       '<div class="inc-value '+(targetReps > current ? 'pos' : targetReps < current ? 'neg' : 'zero')+'" id="si-reps-val">'+
-        (acc > 0 ? '+' : '') + acc + ' → ' + targetReps +
+        (acc > 0 ? '+' : '') + acc + ' → ' + targetReps + unit +
       '</div>'+
       '<button class="inc-btn" '+(isMax?'disabled style="opacity:0.3"':'')+' onclick="changeSI(\'reps\',1)">+</button>';
   } else {
     var el = document.getElementById('si-reps-val');
-    if (el) { el.textContent = (acc>0?'+':'')+acc; el.className='inc-value '+(acc>0?'pos':acc<0?'neg':'zero'); }
+    if (el) { el.textContent = (acc>0?'+':'')+acc+unit; el.className='inc-value '+(acc>0?'pos':acc<0?'neg':'zero'); }
   }
 }
 
@@ -3370,6 +3411,11 @@ function confirmFinishSession() {
           var maxDist = Math.max.apply(null, workSets.map(function(s){ return s.distance||0; }));
           cfg.distance = Math.max(0, maxDist + (inc.distance||0));
           cfg.reps = 0;
+        } else if (sType==='cardio') {
+          // il cardio progedisce in minuti: il delta è in inc.reps, reps resta 0
+          var maxDur = Math.max.apply(null, workSets.map(function(s){ return s.duration||0; }));
+          cfg.duration = Math.max(0, maxDur + (inc.reps||0));
+          cfg.reps = 0;
         } else {
           cfg.reps = Math.max(1, (lastSet.reps||1) + (inc.reps||0));
         }
@@ -3481,11 +3527,13 @@ function showSessionDetail(idx) {
       var ex=findExercise(e.exerciseId);if(!ex)return'';
       var inc = getInc(e.exerciseId, e.increments);
       var isCarry = getExerciseType(e.exerciseId)==='carry';
+      var isCardio = getExerciseType(e.exerciseId)==='cardio';
       var incParts = [];
       if (inc && inc.weight) incParts.push((inc.weight>0?'+':'')+fmtWeight(inc.weight)+'kg peso');
       if (inc && inc.sets)   incParts.push((inc.sets>0?'+':'')+inc.sets+' serie');
-      // sui carry il delta rilevante è la distanza, non le ripetizioni
+      // sui carry il delta rilevante è la distanza, sul cardio la durata
       if (inc && isCarry && inc.distance) incParts.push((inc.distance>0?'+':'')+inc.distance+'m');
+      else if (inc && isCardio && inc.reps) incParts.push((inc.reps>0?'+':'')+inc.reps+' min');
       else if (inc && inc.reps) incParts.push((inc.reps>0?'+':'')+inc.reps+' rip');
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
@@ -3496,6 +3544,9 @@ function showSessionDetail(idx) {
           if (isCarry) {
             var cw = set.weight ? set.weight+'kg × ' : '';
             return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
+          }
+          if (isCardio) {
+            return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+(set.duration||0)+' min</div>';
           }
           var load = set.weight ? set.weight+'kg × ' : '';
           return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
@@ -3527,7 +3578,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.10';
+var APP_VERSION = '4.3.12';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3797,7 +3848,7 @@ function editCurrentSession() {
       exerciseId: e.exerciseId,
       sets: (e.sets||[]).map(function(set){
         set = set || {};
-        return {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, rpe: set.rpe||''};
+        return {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, duration: set.duration||0, rpe: set.rpe||''};
       }),
       increments: inc ? normInc(inc) : normInc(null)
     };
@@ -3825,8 +3876,17 @@ function renderRetroExerciseList() {
     var name = ex ? (ex.name) : re.exerciseId;
     var inc = normInc(re.increments);
     var isCarry = getExerciseType(re.exerciseId)==='carry';
+    var isCardio = getExerciseType(re.exerciseId)==='cardio';
 
     var setsHtml = re.sets.map(function(s, si) {
+      // Cardio: una sola colonna, i minuti. Niente kg né RPE.
+      if (isCardio) {
+        return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
+          '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
+          '<input type="number" class="set-inp" style="flex:1" placeholder="min" value="'+(s.duration||0)+'" oninput="updateRetroSet('+idx+','+si+',\'duration\',this.value)" min="1" step="1">'+
+          '<button class="btn btn-xs btn-danger btn-icon" onclick="removeRetroSet('+idx+','+si+')">✕</button>'+
+        '</div>';
+      }
       return '<div class="flex gap-8 items-center" style="margin-bottom:6px">'+
         '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+(s.weight||'')+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
@@ -3850,7 +3910,8 @@ function renderRetroExerciseList() {
       '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'+
       '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Progressione prossimo allenamento</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-        // weight
+        // weight (non per il cardio, che non ha carico)
+        (isCardio ? '' :
         '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',-0.5)">−</button>'+
           '<div style="text-align:center;min-width:36px">'+
@@ -3858,7 +3919,7 @@ function renderRetroExerciseList() {
             '<div style="font-size:9px;color:var(--text3)">kg</div>'+
           '</div>'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'weight\',0.5)">+</button>'+
-        '</div>'+
+        '</div>')+
         // sets
         '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',-1)">−</button>'+
@@ -3868,11 +3929,12 @@ function renderRetroExerciseList() {
           '</div>'+
           '<button class="inc-btn" style="width:24px;height:24px;font-size:16px" onclick="updateRetroIncrement('+idx+',\'sets\',1)">+</button>'+
         '</div>'+
-        // ripetizioni (o distanza, sui carry) — step fissi sulla ladder
+        // ripetizioni (o distanza sui carry, o durata sul cardio) — step fissi sulla ladder
         (function() {
           var progression = getRepProgression(re.exerciseId);
           var lastSet = re.sets.length ? re.sets[re.sets.length-1] : null;
           var cur = isCarry ? ((lastSet && lastSet.distance) || progression[0])
+                            : isCardio ? ((lastSet && lastSet.duration) || progression[0])
                             : ((lastSet && lastSet.reps) || progression[0]);
           if (!isFinite(cur)) cur = progression[0];
           var base = snapToProgression(Math.max(progression[0], cur), progression);
@@ -3880,11 +3942,13 @@ function renderRetroExerciseList() {
           var target = snapToProgression(base + acc, progression);
           var isMinR = target <= progression[0], isMaxR = target >= progression[progression.length-1];
           var repColor = target > base ? 'var(--green)' : target < base ? 'var(--red)' : 'var(--text3)';
+          var unit = isCarry ? 'm' : isCardio ? ' min' : '';
+          var shortUnit = isCarry ? 'm' : isCardio ? 'min' : 'rip';
           return '<div style="flex:1;min-width:80px;background:var(--bg4);border-radius:6px;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px">'+
             '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMinR?'opacity:0.3':'')+ '" '+(isMinR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',-1)">−</button>'+
             '<div style="text-align:center;min-width:36px">'+
-              '<div style="font-size:13px;font-weight:900;color:'+repColor+'">'+(acc>0?'+':'')+acc+' → '+target+'</div>'+
-              '<div style="font-size:9px;color:var(--text3)">'+(isCarry?'m':'rip')+' ('+progression.join('→')+(isCarry?'m':'')+')</div>'+
+              '<div style="font-size:13px;font-weight:900;color:'+repColor+'">'+(acc>0?'+':'')+acc+unit+' → '+target+unit+'</div>'+
+              '<div style="font-size:9px;color:var(--text3)">'+shortUnit+' ('+progression.join('→')+unit+')</div>'+
             '</div>'+
             '<button class="inc-btn" style="width:24px;height:24px;font-size:16px;'+(isMaxR?'opacity:0.3':'')+ '" '+(isMaxR?'disabled':'')+' onclick="updateRetroIncrement('+idx+',\'reps\',1)">+</button>'+
           '</div>';
@@ -3909,10 +3973,12 @@ function renderRetroExerciseList() {
       '<div class="flex gap-8" style="margin-bottom:6px">'+
         '<span style="min-width:24px"></span>'+/* space for reorder */
         '<span style="font-size:10px;color:var(--text3);min-width:20px"></span>'+
-        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
-        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">'+(isCarry?'M':'RIP')+'</span>'+
-        '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE</span>'+
-        '<span style="width:34px"></span>'+
+        (isCardio
+          ? '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">MIN</span><span style="width:34px"></span>'
+          : '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
+            '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">'+(isCarry?'M':'RIP')+'</span>'+
+            '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE</span>'+
+            '<span style="width:34px"></span>')+
       '</div>'+
       setsHtml+
       incHtml+
@@ -3934,11 +4000,13 @@ function updateRetroIncrement(exIdx, field, delta) {
   re.increments = normInc(re.increments);
   var inc = re.increments;
   var isCarry = getExerciseType(re.exerciseId)==='carry';
+  var isCardio = getExerciseType(re.exerciseId)==='cardio';
   if (field === 'reps' && isCarry) field = 'distance';
   if (field === 'reps' || field === 'distance') {
     var progression = getRepProgression(re.exerciseId);
     var lastSet = re.sets.length ? re.sets[re.sets.length-1] : null;
     var cur = isCarry ? ((lastSet && lastSet.distance) || progression[0])
+                      : isCardio ? ((lastSet && lastSet.duration) || progression[0])
                       : ((lastSet && lastSet.reps) || progression[0]);
     if (!isFinite(cur)) cur = progression[0];
     var base = snapToProgression(Math.max(progression[0], cur), progression);
@@ -3988,9 +4056,14 @@ function filterRetroExercises() {
 function pickRetroExercise(exId) {
   var firstDist = getRepProgression(exId)[0];
   var isCarryNew = getExerciseType(exId)==='carry';
+  var isCardioNew = getExerciseType(exId)==='cardio';
+  var firstDur = getCardioProgression(exId)[0];
+  var firstSet = isCarryNew ? {weight:0,reps:0,distance:firstDist,rpe:''}
+               : isCardioNew ? {weight:0,reps:0,distance:0,duration:firstDur,rpe:''}
+               : {weight:0,reps:10,distance:0,duration:0,rpe:''};
   retroExercises.push({
     exerciseId: exId,
-    sets: isCarryNew ? [{weight:0,reps:0,distance:firstDist,rpe:''}] : [{weight:0,reps:10,distance:0,rpe:''}],
+    sets: [firstSet],
     increments: normInc(null)
   });
   closeModal('modal-retro-ex-picker');
@@ -4010,24 +4083,39 @@ function removeRetroExercise(idx) {
 function addRetroSet(idx) {
   var re = retroExercises[idx];
   var isCarry = getExerciseType(re.exerciseId)==='carry';
-  var last = re.sets[re.sets.length-1] || {weight:0,reps:10,distance:0,rpe:''};
-  re.sets.push({
-    weight: last.weight||0,
-    reps: isCarry ? 0 : (last.reps||10),
-    distance: isCarry ? (last.distance||getRepProgression(re.exerciseId)[0]) : 0,
-    rpe: last.rpe||''
-  });
+  var isCardio = getExerciseType(re.exerciseId)==='cardio';
+  var last = re.sets[re.sets.length-1] || {weight:0,reps:10,distance:0,duration:0,rpe:''};
+  if (isCardio) {
+    re.sets.push({
+      weight: 0,
+      reps: 0,
+      distance: 0,
+      duration: last.duration || getCardioProgression(re.exerciseId)[0],
+      rpe: ''
+    });
+  } else {
+    re.sets.push({
+      weight: last.weight||0,
+      reps: isCarry ? 0 : (last.reps||10),
+      distance: isCarry ? (last.distance||getRepProgression(re.exerciseId)[0]) : 0,
+      duration: 0,
+      rpe: last.rpe||''
+    });
+  }
   renderRetroExerciseList();
 }
 
 function removeRetroSet(exIdx, setIdx) {
   var re = retroExercises[exIdx];
   var isCarry = getExerciseType(re.exerciseId)==='carry';
+  var isCardio = getExerciseType(re.exerciseId)==='cardio';
   re.sets.splice(setIdx, 1);
   if (!re.sets.length) {
     re.sets.push(isCarry
-      ? {weight:0,reps:0,distance:getRepProgression(re.exerciseId)[0],rpe:''}
-      : {weight:0,reps:10,distance:0,rpe:''});
+      ? {weight:0,reps:0,distance:getRepProgression(re.exerciseId)[0],duration:0,rpe:''}
+      : isCardio
+      ? {weight:0,reps:0,distance:0,duration:getCardioProgression(re.exerciseId)[0],rpe:''}
+      : {weight:0,reps:10,distance:0,duration:0,rpe:''});
   }
   renderRetroExerciseList();
 }
@@ -4046,16 +4134,18 @@ function saveRetroSession() {
   var totalVolume=0, totalSets=0;
   var exercises = retroExercises.map(function(re){
     var isCarry = getExerciseType(re.exerciseId)==='carry';
-    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*(isCarry?0:(s.reps||0)));},0);
+    var isCardio = getExerciseType(re.exerciseId)==='cardio';
+    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*((isCarry||isCardio)?0:(s.reps||0)));},0);
     totalVolume += vol; totalSets += re.sets.length;
     return {
       exerciseId: re.exerciseId,
       sets: re.sets.map(function(s){
         return {
-          weight: s.weight||0,
-          reps: isCarry ? 0 : (s.reps||0),
+          weight: isCardio ? 0 : (s.weight||0),
+          reps: (isCarry||isCardio) ? 0 : (s.reps||0),
           distance: isCarry ? (s.distance||0) : 0,
-          rpe: s.rpe||'', type:'work', done:true
+          duration: isCardio ? (s.duration||0) : 0,
+          rpe: isCardio ? '' : (s.rpe||''), type:'work', done:true
         };
       }),
       volume: vol,
