@@ -2810,7 +2810,7 @@ function renderSessionExercises() {
       hdrCols='<span>#</span><span>Peso (kg)</span><span>Dist (m)</span><span>RPE</span><span>OK</span>';
       colTemplate='carry';
     } else if (exType==='cardio') {
-      hdrCols='<span>#</span><span colspan="2">Durata (min)</span><span></span><span>OK</span>';
+      hdrCols='<span>#</span><span style="grid-column:2 / span 2">Durata (min)</span><span style="grid-column:5">OK</span>';
       colTemplate='cardio';
     } else if (exType==='timed') {
       hdrCols='<span>#</span><span>Carico (kg)</span><span>Durata (s)</span><span>RPE</span><span>OK</span>';
@@ -2837,8 +2837,10 @@ function renderSessionExercises() {
         inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
                '<input type="number" class="set-inp" value="'+(set.distance||30)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'distance\',this.value)" onfocus="this.select()">';
       } else if (colTemplate==='cardio') {
-        inputs='<input type="number" class="set-inp" value="'+(set.duration||20)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()" style="grid-column:span 2">'+
-               '<span></span>';
+        // Una sola cella, centrata sulle due colonne peso/rip e piu' stretta:
+        // prima era larga quanto due colonne piene e con una cella vuota in
+        // piu', che spingeva la checkbox "serie completata" a capo.
+        inputs='<input type="number" class="set-inp" value="'+(set.duration||20)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()" style="grid-column:2 / span 2;max-width:130px;justify-self:center">';
       } else if (colTemplate==='timed') {
         inputs='<input type="number" class="set-inp" value="'+(set.weight||0)+'" step="0.5" min="0" onchange="updateSet('+exIdx+','+setIdx+',\'weight\',this.value)" onfocus="this.select()">'+
                '<input type="number" class="set-inp" value="'+(set.duration||30)+'" step="0.5" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'duration\',this.value)" onfocus="this.select()">';
@@ -3523,7 +3525,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.8';
+var APP_VERSION = '4.3.9';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
