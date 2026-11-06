@@ -3458,8 +3458,9 @@ function getMuscleDistribution() {
 }
 
 function showSessionDetail(idx) {
+  var s = state.sessions[idx];
+  if (!s) { showToast('Sessione non trovata'); return; }
   currentDetailIdx = idx;
-  var s=state.sessions[idx];
   var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   // FIX 3: mostra solo gli incrementi salvati nella sessione — nessun fallback al template
   function getInc(exId, savedInc) {
@@ -3523,7 +3524,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.6';
+var APP_VERSION = '4.3.7';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3728,42 +3729,78 @@ function openRetroModal() {
   openModal('modal-retro');
 }
 
+// Valore per <input type="date"> a partire da una data ISO, usando il fuso
+// LOCALE. toISOString() convertirebbe in UTC: le sessioni registrate dopo
+// mezzanotte mostrerebbero il giorno precedente e ogni modifica sposterebbe
+// la data di un giorno.
+function localDateValue(iso) {
+  var d = iso ? new Date(iso) : new Date();
+  if (isNaN(d.getTime())) return '';
+  var p = function(n){ return (n<10?'0':'')+n; };
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+
+// Converte il valore locale di <input type="date"> in ISO. Se baseIso e'
+// indicata (modifica di una sessione) conserva l'ora originale: senza,
+// ogni salvataggio riporterebbe l'orario a mezzanotte.
+function isoFromLocalDate(value, baseIso) {
+  var p = String(value).split('-');
+  var d = baseIso ? new Date(baseIso) : new Date();
+  if (isNaN(d.getTime())) d = new Date();
+  d.setFullYear(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+  return d.toISOString();
+}
+
+// Incrementi di un esercizio dentro un template, con guardie sui dati
+// vecchi/parziali (template senza exercises, esercizio rimosso, ecc.).
+// Ritorna null se non ci sono incrementi.
+function templateIncrements(tIdx, exId) {
+  var tpl = state.templates ? state.templates[tIdx] : null;
+  if (!tpl || !tpl.exercises) return null;
+  for (var i=0; i<tpl.exercises.length; i++) {
+    var te = tpl.exercises[i];
+    if (te && te.exerciseId === exId) return hasInc(te.increments) ? te.increments : null;
+  }
+  return null;
+}
+
 // Called from the session detail modal "Modifica" button
 var currentDetailIdx = null;
 function editCurrentSession() {
   if (currentDetailIdx === null) return;
   var s = state.sessions[currentDetailIdx];
+  if (!s) { showToast('Sessione non trovata'); return; }
   editingSessionIdx = currentDetailIdx;
   retroMuscleFilter = '';
-  // Convert saved exercises back to retro format, recovering increments with same fallback as showSessionDetail
+  // Convert saved exercises back to retro format, recovering increments with
+  // fallback: salvati sull'esercizio -> template della sessione -> qualunque
+  // template. Le guardie servono perche' una sessione puo' contenere esercizi
+  // aggiunti al volo o non piu' presenti nel template: prima un esercizio
+  // "orfano" faceva lanciare un TypeError e "Modifica" sembrava non fare nulla.
   retroExercises = (s.exercises||[]).map(function(e){
-    // 1) saved on exercise
+    if (!e || !e.exerciseId) return null;
+    // 1) salvati sull'esercizio
     var inc = hasInc(e.increments) ? e.increments : null;
-    // 2) linked template
-    if (!inc && s.templateIdx != null) {
-      var tpl = state.templates[s.templateIdx];
-      if (tpl) {
-        var te = tpl.exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
-        if (hasInc(te.increments)) inc = te.increments;
-      }
-    }
-    // 3) any template
-    if (!inc) {
+    // 2) template collegato alla sessione
+    if (!inc && s.templateIdx != null) inc = templateIncrements(s.templateIdx, e.exerciseId);
+    // 3) qualunque template
+    if (!inc && state.templates) {
       for (var t=0; t<state.templates.length; t++) {
-        var te = state.templates[t].exercises.find(function(t){ return t.exerciseId === e.exerciseId; });
-        if (hasInc(te.increments)) { inc = te.increments; break; }
+        inc = templateIncrements(t, e.exerciseId);
+        if (inc) break;
       }
     }
     return {
       exerciseId: e.exerciseId,
       sets: (e.sets||[]).map(function(set){
+        set = set || {};
         return {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, rpe: set.rpe||''};
       }),
       increments: inc ? normInc(inc) : normInc(null)
     };
-  });
+  }).filter(Boolean);
   // Fill form fields
-  var dateStr = new Date(s.date).toISOString().split('T')[0];
+  var dateStr = localDateValue(s.date);
   document.getElementById('retro-date').value = dateStr;
   document.getElementById('retro-name').value = s.name||'';
   document.getElementById('retro-duration').value = s.duration ? Math.round(s.duration/60) : '';
@@ -4024,12 +4061,13 @@ function saveRetroSession() {
     };
   });
 
-  if (editingSessionIdx !== null) {
+  var existing = editingSessionIdx !== null ? state.sessions[editingSessionIdx] : null;
+
+  if (existing) {
     // Update existing session, preserve fields we don't edit (templateIdx, retro flag, etc.)
-    var existing = state.sessions[editingSessionIdx];
     state.sessions[editingSessionIdx] = Object.assign({}, existing, {
       name: name,
-      date: new Date(date).toISOString(),
+      date: isoFromLocalDate(date, existing.date),
       duration: durMin*60,
       exercises: exercises,
       totalVolume: totalVolume,
@@ -4041,7 +4079,7 @@ function saveRetroSession() {
     renderStorico();
     showToast('Sessione aggiornata!');
   } else {
-    var newSession = {date: new Date(date).toISOString(), name:name, duration:durMin*60, exercises:exercises, totalVolume:totalVolume, totalSets:totalSets, retro:true};
+    var newSession = {date: isoFromLocalDate(date), name:name, duration:durMin*60, exercises:exercises, totalVolume:totalVolume, totalSets:totalSets, retro:true};
     state.sessions.push(newSession);
     state.sessions.sort(function(a,b){return new Date(a.date)-new Date(b.date);});
     saveState();
