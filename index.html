@@ -332,9 +332,11 @@ select.input{appearance:none}
     <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importData(event)">
   </div>
   <div class="card">
-    <div class="card-title">ℹ️ App e diagnostica</div>
-    <div style="font-size:13px;color:var(--text2);line-height:1.8" id="app-diag">…</div>
-    <div style="font-size:11px;color:var(--text3);margin-top:8px">IronLog v<span id="app-version">…</span></div>
+    <div class="card-title">ℹ️ App</div>
+    <div style="font-size:13px;color:var(--text2)">Versione installata: <b style="color:var(--text)">v<span id="app-version">…</span></b></div>
+    <!-- Diagnostica nascosta: renderAppDiag() continua a calcolare tutti i valori
+         in #app-diag per il debug futuro, ma non li mostriamo all'utente. -->
+    <div id="app-diag" style="display:none"></div>
   </div>
   <!-- sonde diagnostica: misurano 100dvh e safe-area reali del dispositivo -->
   <div id="probe-dvh" style="position:fixed;top:0;left:0;width:0;height:100dvh;visibility:hidden;pointer-events:none"></div>
@@ -3525,7 +3527,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.9';
+var APP_VERSION = '4.3.10';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
