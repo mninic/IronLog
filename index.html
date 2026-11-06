@@ -2870,7 +2870,6 @@ function renderSessionExercises() {
         '<span style="font-size:12px;font-weight:700;min-width:30px;text-align:center;color:var(--accent)">'+restLabel+'</span>'+
         '<button type="button" style="width:18px;height:18px;border:none;background:transparent;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;font-family:inherit" onclick="changeSessionRest('+exIdx+',15)">+</button>'+
       '</div>'+
-      '<button class="btn btn-xs btn-secondary" onclick="openSessionIncrement('+exIdx+')" title="Modifica progressione">Prog.</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeSessionExercise('+exIdx+')">X</button></div></div>'+
       '<div class="sets-table">'+
       '<div class="sets-hdr">'+hdrCols+'</div>'+
@@ -3524,7 +3523,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.7';
+var APP_VERSION = '4.3.8';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
