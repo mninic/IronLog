@@ -111,14 +111,25 @@ select.input{appearance:none}
 .exercise-name-s{font-weight:700;font-size:16px}
 .exercise-muscle-s{font-size:11px;color:var(--accent);font-weight:600;margin-top:2px}
 .sets-table{background:var(--bg2);border:1px solid var(--border);border-radius:0;overflow:hidden}
-.sets-hdr{display:grid;grid-template-columns:28px 1fr 1fr 52px 30px;gap:4px;padding:7px 12px;background:var(--bg3);border-bottom:1px solid var(--border)}
+.sets-hdr{display:grid;grid-template-columns:42px 1fr 1fr 52px 30px;gap:4px;padding:7px 12px;background:var(--bg3);border-bottom:1px solid var(--border)}
 .sets-hdr span{font-size:10px;color:var(--text3);font-weight:600;text-align:center;text-transform:uppercase;letter-spacing:0.5px}
-.set-row{display:grid;grid-template-columns:28px 1fr 1fr 52px 30px;gap:4px;padding:7px 12px;border-bottom:1px solid var(--border);align-items:center;transition:background 0.2s}
+.set-row{display:grid;grid-template-columns:42px 1fr 1fr 52px 30px;gap:4px;padding:7px 12px;border-bottom:1px solid var(--border);align-items:center;transition:background 0.2s}
 .set-row:last-child{border-bottom:none}
 .set-row.done-row{background:rgba(232,255,71,0.05)}
 .set-row.wu-row{background:rgba(255,159,67,0.04)}
-.set-num{font-size:12px;color:var(--text3);text-align:center;font-weight:700}
+/* riga con record personale: evidenza laterale, resta leggibile sul tema scuro */
+.set-row.pr-row{background:rgba(232,255,71,0.10);box-shadow:inset 3px 0 0 var(--accent)}
+.set-num{font-size:12px;color:var(--text3);text-align:center;font-weight:700;cursor:pointer;line-height:1.15;min-width:0}
 .set-num.wu{color:var(--warm)}
+.set-num.has-meta{color:var(--accent)}
+/* valore dell'ultima volta, sotto il numero della serie */
+.set-prev{display:block;font-size:8px;font-weight:600;color:var(--text3);white-space:nowrap;line-height:1.3;margin-top:1px;letter-spacing:0}
+.set-meta{display:block;font-size:8px;line-height:1.3;margin-top:1px;white-space:nowrap}
+.set-pr-badge{display:inline-block;font-size:8px;font-weight:800;color:#000;background:var(--accent);border-radius:5px;padding:0 3px;margin-top:2px;line-height:1.4}
+.ex-move-btn{width:20px;height:15px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:8px;line-height:1;padding:0;border-radius:4px;cursor:pointer;font-family:inherit}
+.ex-move-btn:disabled{opacity:0.3;cursor:default}
+.side-badge{display:inline-block;font-size:9px;font-weight:700;color:#1e90ff;background:rgba(30,144,255,0.15);border:1px solid rgba(30,144,255,0.35);border-radius:8px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.set-tag-chip{font-size:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:1px 6px;color:var(--text2);display:inline-block;margin-right:4px}
 .set-inp{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px 3px;color:var(--text);font-size:15px;font-weight:700;text-align:center;width:100%;outline:none;transition:border-color 0.2s;font-family:inherit}
 .set-inp:focus{border-color:var(--accent)}
 .set-rpe{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 2px;color:var(--text);font-size:12px;font-weight:600;text-align:center;width:100%;outline:none;appearance:none;font-family:inherit}
@@ -562,6 +573,14 @@ select.input{appearance:none}
         <div class="chip" data-w="1" onclick="setCfgAllowWeight(true,this)">Con zavorra / palla (kg)</div>
       </div>
     </div>
+    <!-- per-side flag: esercizi a un braccio / una gamba contano doppio -->
+    <div class="input-group" id="cfg-perside-row">
+      <label class="input-label">Conteggio serie e volume</label>
+      <div class="chip-row" id="cfg-perside-chips">
+        <div class="chip" data-side="0" onclick="setCfgPerSide(false,this)">Entrambi i lati insieme</div>
+        <div class="chip" data-side="1" onclick="setCfgPerSide(true,this)">Per lato (×2)</div>
+      </div>
+    </div>
     <!-- distance row: carry only -->
     <div class="flex gap-8 mb-12" id="cfg-distance-row" style="display:none">
       <div style="flex:1"><label class="input-label">Distanza (m)</label><input type="number" class="input" id="cfg-distance" value="30" min="1" step="5"></div>
@@ -636,6 +655,26 @@ select.input{appearance:none}
     <div class="flex gap-8">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-exercise-config')">Annulla</button>
       <button class="btn btn-primary" style="flex:2" id="btn-save-cfg" onclick="saveExerciseConfig()">Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Set options (tag + nota della serie) -->
+<div class="modal-overlay" id="modal-set-options">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="set-options-title">Serie</div>
+    <div class="input-group">
+      <label class="input-label">Tag</label>
+      <div class="chip-row" id="set-options-tags" style="flex-wrap:wrap"></div>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Nota</label>
+      <textarea class="input" id="set-options-note" placeholder="Come è andata questa serie?"></textarea>
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-set-options')">Annulla</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveSetOptions()">Salva</button>
     </div>
   </div>
 </div>
@@ -3341,6 +3380,11 @@ function getDefaultRepsRange(category) {
 
 function selectExercise(exId) {
   closeModal('modal-exercise-picker');
+  // Sostituzione in sessione: la prescrizione in corso resta, cambia l'esercizio
+  if (pickerMode==='substitute') {
+    applySubstituteExercise(exId);
+    return;
+  }
   pendingExerciseId = exId;
   configExerciseIdx = null;
   openExerciseConfig(exId, null);
@@ -3409,12 +3453,16 @@ function typeCanFlagWeight(exType) {
 function cfgSummary(cfg) {
   var exType = cfg.exerciseType || getExerciseType(cfg.exerciseId);
   var sets = cfg.sets || 0, reps = cfg.reps || 0;
-  if (exType === 'cardio') return (cfg.duration || 0) + ' min';
-  if (exType === 'timed')  return sets + '×' + (cfg.duration || 0) + 's' + (cfg.weight ? ' @ ' + fmtWeight(cfg.weight) + 'kg' : '');
-  if (exType === 'carry')  return sets + '×' + (cfg.distance || 0) + 'm @ ' + fmtWeight(cfg.weight) + 'kg';
-  if (exType === 'power')  return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' · palla ' + fmtWeight(cfg.weight) + 'kg' : ' · a corpo libero');
-  if (exType === 'bodyweight') return sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' @ ' + fmtWeight(cfg.weight) + 'kg zavorra' : ' · a corpo libero');
-  return sets + '×' + reps + ' @ ' + fmtWeight(cfg.weight) + 'kg';
+  var txt;
+  if (exType === 'cardio') txt = (cfg.duration || 0) + ' min';
+  else if (exType === 'timed')  txt = sets + '×' + (cfg.duration || 0) + 's' + (cfg.weight ? ' @ ' + fmtWeight(cfg.weight) + 'kg' : '');
+  else if (exType === 'carry')  txt = sets + '×' + (cfg.distance || 0) + 'm @ ' + fmtWeight(cfg.weight) + 'kg';
+  else if (exType === 'power')  txt = sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' · palla ' + fmtWeight(cfg.weight) + 'kg' : ' · a corpo libero');
+  else if (exType === 'bodyweight') txt = sets + '×' + reps + (cfgAllowsWeight(cfg) ? ' @ ' + fmtWeight(cfg.weight) + 'kg zavorra' : ' · a corpo libero');
+  else txt = sets + '×' + reps + ' @ ' + fmtWeight(cfg.weight) + 'kg';
+  // "Per lato" raddoppia serie e volume: va scritto, altrimenti il totale non torna
+  if (cfg.perSide && exType !== 'cardio') txt += ' · per lato (×2)';
+  return txt;
 }
 
 // Type badge labels and colors
@@ -3429,12 +3477,20 @@ var TYPE_META = {
 
 // Extra-load flag currently selected in the config modal (see setCfgAllowWeight)
 var cfgAllowWeight = false;
+// "Per lato": la serie conta doppio in volume e numero serie (es. curl a un braccio)
+var cfgPerSide = false;
 
 function setCfgAllowWeight(on, el) {
   cfgAllowWeight = !!on;
   document.querySelectorAll('#cfg-allowweight-chips .chip').forEach(function(c){ c.classList.remove('selected'); });
   if (el) el.classList.add('selected');
   updateCfgModalForType(getExerciseType(pendingExerciseId), null);
+}
+
+function setCfgPerSide(on, el) {
+  cfgPerSide = !!on;
+  document.querySelectorAll('#cfg-perside-chips .chip').forEach(function(c){ c.classList.remove('selected'); });
+  if (el) el.classList.add('selected');
 }
 
 function updateCfgModalForType(exType, existing) {
@@ -3458,6 +3514,8 @@ function updateCfgModalForType(exType, existing) {
   document.getElementById('cfg-warmup-row').style.display   = showWarmup  ? '' : 'none';
   document.getElementById('cfg-rpe-cell').style.display     = showRpe     ? '' : 'none';
   document.getElementById('cfg-allowweight-row').style.display = canFlag ? '' : 'none';
+  // Il cardio non ha lati: il flag resta fuori dal flusso
+  document.getElementById('cfg-perside-row').style.display = (exType==='cardio') ? 'none' : '';
   // Label tweaks
   if (exType==='timed') {
     document.getElementById('cfg-duration-label').textContent = 'Durata (sec)';
@@ -3513,6 +3571,11 @@ function openExerciseConfig(exId, existing) {
   cfgAllowWeight = existing ? cfgAllowsWeight(existing) : getExerciseWeightedDefault(exId);
   document.querySelectorAll('#cfg-allowweight-chips .chip').forEach(function(c){
     c.classList.toggle('selected', (c.dataset.w==='1') === cfgAllowWeight);
+  });
+  // Per lato: default off, si eredita dalla config esistente (scheda o sessione)
+  cfgPerSide = !!(existing && existing.perSide);
+  document.querySelectorAll('#cfg-perside-chips .chip').forEach(function(c){
+    c.classList.toggle('selected', (c.dataset.side==='1') === cfgPerSide);
   });
   document.querySelectorAll('#warmup-chips .chip').forEach(function(c){c.classList.toggle('selected',parseInt(c.dataset.val)===warmupCount);});
   updateCfgModalForType(exType, existing);
@@ -3609,6 +3672,7 @@ function saveExerciseConfig() {
     rpe:      document.getElementById('cfg-rpe').value,
     notes:    document.getElementById('cfg-notes').value,
     warmup:   warmupCount,
+    perSide:  (exType==='cardio') ? false : cfgPerSide,
     increments:{weight:increments.weight,sets:increments.sets,reps:increments.reps,distance:increments.distance||0},
   };
   if (pickerMode==='template') {
@@ -3631,6 +3695,8 @@ function saveExerciseConfig() {
       var prevSessCfg = state.activeSession.exercises[configExerciseIdx].config;
       if (prevSessCfg && prevSessCfg.templateExerciseId) cfg.templateExerciseId = prevSessCfg.templateExerciseId;
       if (prevSessCfg && prevSessCfg.fixedIncrements) cfg.fixedIncrements = prevSessCfg.fixedIncrements;
+      // La sostituzione resta registrata anche dopo una modifica della config
+      if (prevSessCfg && prevSessCfg.substitutedFor) cfg.substitutedFor = prevSessCfg.substitutedFor;
       state.activeSession.exercises[configExerciseIdx].config=cfg;
     }
     else state.activeSession.exercises.push(buildSessionExercise(cfg));
@@ -3762,6 +3828,21 @@ function getLastSessionDataForExercise(exId, templateId) {
   return null;
 }
 
+// Serie di lavoro dell'ultima sessione con questo esercizio. Servono a
+// mostrare il riferimento accanto a ogni serie della sessione attiva.
+function getLastSessionSetsForExercise(exId, templateId) {
+  for (var i = state.sessions.length - 1; i >= 0; i--) {
+    var s = state.sessions[i];
+    if (templateId && !sessionInTemplate(s, templateId)) continue;
+    var e = (s.exercises||[]).find(function(x){ return x.exerciseId === exId; });
+    if (e && e.sets && e.sets.length) {
+      var work = e.sets.filter(function(st){ return st.type !== 'warmup'; });
+      return work.length ? work : e.sets;
+    }
+  }
+  return null;
+}
+
 function buildSessionExercise(cfg) {
   var ex = findExercise(cfg.exerciseId);
   var exType = cfg.exerciseType || getExerciseType(cfg.exerciseId);
@@ -3854,8 +3935,19 @@ function addExerciseToSession() {
   openExercisePicker('session');
 }
 
+// Formato compatto di una serie: usato per il riferimento "ultima volta".
+function fmtSetValue(set, exType) {
+  if (!set) return '';
+  if (exType==='carry')  return (set.weight?fmtWeight(set.weight)+'×':'')+(set.distance||0)+'m';
+  if (exType==='cardio') return (set.duration||0)+'min';
+  if (exType==='timed')  return (set.weight?fmtWeight(set.weight)+'×':'')+(set.duration||0)+'s';
+  if (!set.weight) return (set.reps||0)+' rip';
+  return fmtWeight(set.weight)+'×'+(set.reps||0);
+}
+
 function renderSessionExercises() {
   if (!state.activeSession) return;
+  var sessionTplId = state.activeSession.templateId || null;
   document.getElementById('session-exercises').innerHTML = state.activeSession.exercises.map(function(ex,exIdx){
     var inc = normInc(ex.config.increments);
     var exType = ex.config.exerciseType || getExerciseType(ex.config.exerciseId);
@@ -3870,6 +3962,8 @@ function renderSessionExercises() {
     else if (inc.reps) nextParts.push('<span class="'+(inc.reps>0?'nd-up':'nd-dn')+'">'+(inc.reps>0?'+':'')+inc.reps+' rip</span>');
     var wuCount = ex.config.warmup||0;
     var withWeight = cfgAllowsWeight(ex.config);
+    // Riferimento dell'ultima volta per singola serie (stessa posizione)
+    var lastSets = getLastSessionSetsForExercise(ex.config.exerciseId, sessionTplId);
     // Column headers depend on type
     var hdrCols, colTemplate;
     if (exType==='carry') {
@@ -3918,8 +4012,21 @@ function renderSessionExercises() {
         '<option value="">-</option>'+
         ['6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option'+(set.rpe==r?' selected':'')+'>'+r+'</option>';}).join('')+
         '</select>';
-      return '<div class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+'">'+
-        '<div class="set-num'+(isWu?' wu':'')+'">'+workNum+'</div>'+
+      // Riferimento "ultima volta" della stessa serie (solo serie di lavoro)
+      var prevTxt = '';
+      var workIdx = setIdx - wuCount;
+      if (!isWu && lastSets && lastSets[workIdx]) prevTxt = fmtSetValue(lastSets[workIdx], exType);
+      // Tag/nota della serie: piccolo marcatore, il dettaglio si apre toccando il numero
+      var tags = set.tags || [];
+      var metaHtml = '';
+      if (tags.length) metaHtml = '<span class="set-meta">'+tags.map(function(t){ return SET_TAGS[t]?SET_TAGS[t].emoji:''; }).join('')+'</span>';
+      else if (set.note) metaHtml = '<span class="set-meta">📝</span>';
+      return '<div id="set-row-'+exIdx+'-'+setIdx+'" class="set-row'+(set.done?' done-row':'')+(isWu?' wu-row':'')+(set.pr?' pr-row':'')+'">'+
+        '<div class="set-num'+(isWu?' wu':'')+((tags.length||set.note)?' has-meta':'')+'" onclick="openSetOptions('+exIdx+','+setIdx+')" title="Tocca per note e tag">'+workNum+
+          (prevTxt?'<span class="set-prev" title="Ultima volta">'+prevTxt+'</span>':'')+
+          metaHtml+
+          (set.pr?'<span class="set-pr-badge">PR</span>':'')+
+        '</div>'+
         inputs+rpeHtml+
         '<div class="set-chk'+(set.done?' ok':'')+'" onclick="toggleSet('+exIdx+','+setIdx+')">'+(set.done?'✓':'')+'</div>'+
         '</div>';
@@ -3927,9 +4034,17 @@ function renderSessionExercises() {
     var restSec = ex.config.rest || 120;
     var restMin = Math.floor(restSec/60), restRemS = restSec%60;
     var restLabel = restMin + ':' + (restRemS<10?'0':'') + restRemS;
+    // Sostituzione: mostra al posto di quale esercizio è stato messo
+    var subBadge = '';
+    if (ex.config.substitutedFor) {
+      var origEx = findExercise(ex.config.substitutedFor);
+      subBadge = '<span class="side-badge" style="color:var(--warm);background:rgba(255,159,67,0.12);border-color:rgba(255,159,67,0.35)" title="Esercizio sostituito in questa sessione">⇄ al posto di '+escapeHtml(origEx?origEx.name:'esercizio')+'</span>';
+    }
     return '<div class="exercise-section">'+
       '<div class="exercise-header">'+
-      '<div><div class="exercise-name-s">'+escapeHtml(ex.ex?ex.ex.name:'Esercizio')+'</div>'+
+      '<div><div class="exercise-name-s">'+escapeHtml(ex.ex?ex.ex.name:'Esercizio')+
+        (ex.config.perSide?'<span class="side-badge" title="Serie e volume contati per lato">×2 per lato</span>':'')+
+        '</div>'+
       '<div class="exercise-muscle-s">'+escapeHtml(ex.ex?ex.ex.muscle:'')+'</div></div>'+
       '<div class="flex gap-8" style="align-items:center">'+
       '<div style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:3px 6px" title="Recupero">'+
@@ -3937,6 +4052,11 @@ function renderSessionExercises() {
         '<button type="button" style="width:18px;height:18px;border:none;background:transparent;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;font-family:inherit" onclick="changeSessionRest('+exIdx+',-15)">−</button>'+
         '<span style="font-size:12px;font-weight:700;min-width:30px;text-align:center;color:var(--accent)">'+restLabel+'</span>'+
         '<button type="button" style="width:18px;height:18px;border:none;background:transparent;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;font-family:inherit" onclick="changeSessionRest('+exIdx+',15)">+</button>'+
+      '</div>'+
+      // Riordino in sessione: frecce compatte, disabilitate ai bordi
+      '<div style="display:flex;flex-direction:column;gap:2px">'+
+        '<button class="ex-move-btn" onclick="moveSessionExercise('+exIdx+',-1)" '+(exIdx===0?'disabled':'')+' title="Sposta su">▲</button>'+
+        '<button class="ex-move-btn" onclick="moveSessionExercise('+exIdx+',1)" '+(exIdx===state.activeSession.exercises.length-1?'disabled':'')+' title="Sposta giù">▼</button>'+
       '</div>'+
       '<button class="btn btn-xs btn-danger" onclick="removeSessionExercise('+exIdx+')">X</button></div></div>'+
       '<div class="sets-table">'+
@@ -3946,7 +4066,8 @@ function renderSessionExercises() {
       '<button class="btn btn-secondary" onclick="addSet('+exIdx+')">+ Serie</button>'+
       '<button class="btn btn-danger" onclick="removeLastSet('+exIdx+')">- Serie</button></div>'+
       '<div class="next-badge"><span class="nd-0">Prox:</span>'+(nextParts.length?nextParts.join(' '):'<span class="nd-0">nessuna modifica</span>')+
-      '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
+      '<button class="btn btn-xs btn-ghost" style="margin-left:auto" onclick="substituteSessionExercise('+exIdx+')" title="Sostituisci esercizio mantenendo la prescrizione">⇄ Sostituisci</button>'+
+      '<button class="btn btn-xs btn-ghost" onclick="openSessionIncrement('+exIdx+')">Modifica</button></div>'+
       (function(){
         // la ladder dei carry e' in metri, quella del cardio in minuti
         var progression = getRepProgression(ex.config ? ex.config.exerciseId : null);
@@ -3956,13 +4077,12 @@ function renderSessionExercises() {
         var noteTxt = ex.config.notes ? '<span>'+escapeHtml(ex.config.notes)+'</span> · ' : '';
         // "Ultima volta" è solo informativo: la prescrizione viene dalla scheda (7.1).
         var lastTxt = '';
-        var lastData = getLastSessionDataForExercise(ex.config ? ex.config.exerciseId : null,
-          state.activeSession ? state.activeSession.templateId : null);
+        var lastData = getLastSessionDataForExercise(ex.config ? ex.config.exerciseId : null, sessionTplId);
         if (lastData) {
           lastTxt = '<div style="margin-top:3px;color:var(--text3);font-size:11px">ultima volta: '+
             escapeHtml(fmtLastSession(lastData, exType))+'</div>';
         }
-        return '<div class="ex-note-bar">'+noteTxt+label+progStr+lastTxt+'</div>';
+        return '<div class="ex-note-bar">'+subBadge+noteTxt+label+progStr+lastTxt+'</div>';
       })()+
       '</div>';
   }).join('')+
@@ -3974,9 +4094,87 @@ function renderSessionExercises() {
   '</div>';
 }
 
+// Riordino degli esercizi dentro la sessione (senza toccare la scheda)
+function moveSessionExercise(exIdx, dir) {
+  if (!state.activeSession) return;
+  var exs = state.activeSession.exercises;
+  var to = exIdx + dir;
+  if (to < 0 || to >= exs.length) return;
+  var tmp = exs[exIdx];
+  exs[exIdx] = exs[to];
+  exs[to] = tmp;
+  saveState();
+  renderSessionExercises();
+}
+
+var substitutingIdx = null;
+
+function substituteSessionExercise(exIdx) {
+  if (!state.activeSession) return;
+  if (!state.activeSession.exercises[exIdx]) return;
+  substitutingIdx = exIdx;
+  openExercisePicker('substitute');
+}
+
+// Copia la prescrizione della sessione sul nuovo esercizio e azzera il
+// collegamento alla scheda: la sostituzione vale solo per oggi (7.1).
+function applySubstituteExercise(exId) {
+  var exIdx = substitutingIdx;
+  substitutingIdx = null;
+  if (!state.activeSession || exIdx === null || !state.activeSession.exercises[exIdx]) return;
+  var old = state.activeSession.exercises[exIdx];
+  var oldCfg = old.config || {};
+  var exType = getExerciseType(exId);
+  var sameShape = (oldCfg.exerciseType || getExerciseType(oldCfg.exerciseId)) === exType;
+  var supportsReps = (exType!=='carry' && exType!=='cardio');
+  var progression = getRepProgression(exId);
+  var cfg = {
+    exerciseId: exId,
+    exerciseType: exType,
+    allowWeight: getExerciseWeightedDefault(exId),
+    sets: oldCfg.sets || 3,
+    // Stesse ripetizioni target se l'esercizio è dello stesso tipo, altrimenti
+    // si riparte dal primo gradino della progressione.
+    reps: supportsReps ? (sameShape && oldCfg.reps ? snapToProgression(oldCfg.reps, progression) : progression[0]) : 0,
+    weight: sameShape && (exType==='strength'||exType==='carry'||exType==='timed'||getExerciseWeightedDefault(exId)) ? (oldCfg.weight||0) : 0,
+    distance: (exType==='carry') ? (sameShape && oldCfg.distance ? oldCfg.distance : 30) : 0,
+    duration: (exType==='cardio') ? (sameShape && oldCfg.duration ? oldCfg.duration : 20)
+            : (exType==='timed') ? (sameShape && oldCfg.duration ? oldCfg.duration : 30) : 0,
+    rest: oldCfg.rest || 120,
+    rpe: '',
+    notes: oldCfg.notes || '',
+    // Il warm-up si genera solo per la forza: sugli altri tipi resterebbe un
+    // conteggio fantasma e la numerazione delle serie partirebbe da 0.
+    warmup: (exType==='strength') ? (oldCfg.warmup||0) : 0,
+    perSide: !!oldCfg.perSide,
+    // Riferimento all'originale, utile in sessione e nello storico
+    substitutedFor: oldCfg.substitutedFor || oldCfg.exerciseId,
+    // Nessun incremento e nessun id scheda: non deve riscrivere la scheda
+    increments: {weight:0,sets:0,reps:0,distance:0},
+  };
+  state.activeSession.exercises[exIdx] = buildSessionExercise(cfg);
+  saveState();
+  renderSessionExercises();
+  var newEx = findExercise(exId);
+  showToast('Sostituito con ' + (newEx ? newEx.name : 'esercizio'));
+}
+
+
 function updateSet(exIdx,setIdx,field,value) {
   if (!state.activeSession) return;
-  state.activeSession.exercises[exIdx].sets[setIdx][field] = field==='rpe' ? value : (parseFloat(value)||0);
+  var set = state.activeSession.exercises[exIdx].sets[setIdx];
+  set[field] = field==='rpe' ? value : (parseFloat(value)||0);
+  // Se cambiano carico/ripetizioni il PR registrato non è più valido.
+  // Si toglie l'evidenza dalla riga senza ri-renderizzare (non ruba il focus).
+  if (field!=='rpe' && set.pr) {
+    delete set.pr;
+    var row = document.getElementById('set-row-'+exIdx+'-'+setIdx);
+    if (row) {
+      row.classList.remove('pr-row');
+      var badge = row.querySelector('.set-pr-badge');
+      if (badge) badge.parentNode.removeChild(badge);
+    }
+  }
   saveState();
 }
 
@@ -4010,7 +4208,19 @@ function toggleSet(exIdx,setIdx) {
     return;
   }
   set.done = !set.done;
-  if (set.done && set.type==='work') startRestTimer(state.activeSession.exercises[exIdx].config.rest||120);
+  if (set.done) {
+    // Record personale: confronto con lo storico e con le serie già chiuse oggi
+    var pr = detectPR(ex.config.exerciseId, exIdx, setIdx);
+    if (pr) {
+      set.pr = pr;
+      showToast(pr.icon + ' ' + pr.msg, 4000);
+    } else if (set.pr) {
+      delete set.pr;
+    }
+    if (set.type==='work') startRestTimer(state.activeSession.exercises[exIdx].config.rest||120);
+  } else if (set.pr) {
+    delete set.pr;
+  }
   saveState();
   renderSessionExercises();
 }
@@ -4051,6 +4261,124 @@ function removeSessionExercise(exIdx) {
   state.activeSession.exercises.splice(exIdx,1);
   saveState();
   renderSessionExercises();
+}
+
+// ============================================================
+// TAG E NOTE PER SERIE
+// ============================================================
+var SET_TAGS = {
+  cedimento: {label:'Cedimento', emoji:'💀'},
+  dropset:   {label:'Drop set',  emoji:'🔻'},
+  dolore:    {label:'Dolore',    emoji:'⚠️'},
+  tecnica:   {label:'Tecnica',   emoji:'🎯'},
+};
+
+var setOptionsRef = null;   // {exIdx, setIdx, tags}
+
+function openSetOptions(exIdx, setIdx) {
+  if (!state.activeSession) return;
+  var ex = state.activeSession.exercises[exIdx];
+  if (!ex || !ex.sets[setIdx]) return;
+  var set = ex.sets[setIdx];
+  setOptionsRef = {exIdx:exIdx, setIdx:setIdx, tags:(set.tags||[]).slice()};
+  var workNum = set.type==='warmup' ? 'riscaldamento' : (setIdx - (ex.config.warmup||0) + 1);
+  document.getElementById('set-options-title').textContent =
+    'Serie ' + workNum + (ex.ex ? ' · ' + ex.ex.name : '');
+  document.getElementById('set-options-note').value = set.note || '';
+  renderSetOptionsTags();
+  openModal('modal-set-options');
+}
+
+function renderSetOptionsTags() {
+  var el = document.getElementById('set-options-tags');
+  if (!el || !setOptionsRef) return;
+  el.innerHTML = Object.keys(SET_TAGS).map(function(id){
+    var t = SET_TAGS[id];
+    var on = setOptionsRef.tags.indexOf(id)!==-1 ? ' selected' : '';
+    return '<div class="chip'+on+'" onclick="toggleSetTag(\''+id+'\')">'+t.emoji+' '+t.label+'</div>';
+  }).join('');
+}
+
+function toggleSetTag(id) {
+  if (!setOptionsRef) return;
+  var i = setOptionsRef.tags.indexOf(id);
+  if (i===-1) setOptionsRef.tags.push(id); else setOptionsRef.tags.splice(i,1);
+  renderSetOptionsTags();
+}
+
+function saveSetOptions() {
+  closeModal('modal-set-options');
+  if (!setOptionsRef || !state.activeSession) return;
+  var ref = setOptionsRef;
+  setOptionsRef = null;
+  var ex = state.activeSession.exercises[ref.exIdx];
+  if (!ex || !ex.sets[ref.setIdx]) return;
+  var set = ex.sets[ref.setIdx];
+  if (ref.tags.length) set.tags = ref.tags.slice(); else delete set.tags;
+  var note = document.getElementById('set-options-note').value.trim();
+  if (note) set.note = note; else delete set.note;
+  saveState();
+  renderSessionExercises();
+}
+
+// ============================================================
+// RECORD PERSONALI IN SESSIONE
+// ============================================================
+// Migliore prestazione prima della serie indicata: storico completo più le
+// serie già chiuse in questa sessione (esclusa quella in esame).
+function bestPerformanceBefore(exId, exIdx, setIdx) {
+  var best = {weight:0, reps:0, est1rm:0};
+  function consider(set) {
+    var w = set.weight||0, reps = set.reps||0;
+    if (!w || !reps) return;
+    // Il confronto tiene peso e ripetizioni della stessa serie: un 80×3 non
+    // deve far sembrare "PR di ripetizioni" un 80×2 della settimana dopo.
+    if (w > best.weight + 1e-9) { best.weight = w; best.reps = reps; }
+    else if (Math.abs(w - best.weight) < 1e-9 && reps > best.reps) best.reps = reps;
+    var est = w * (1 + reps/30);
+    if (est > best.est1rm) best.est1rm = est;
+  }
+  state.sessions.forEach(function(s){
+    (s.exercises||[]).forEach(function(e){
+      if (e.exerciseId !== exId) return;
+      (e.sets||[]).forEach(function(st){ if (st.type!=='warmup') consider(st); });
+    });
+  });
+  if (state.activeSession) {
+    state.activeSession.exercises.forEach(function(ex, ei){
+      if (!ex.config || ex.config.exerciseId !== exId) return;
+      (ex.sets||[]).forEach(function(st, si){
+        if (ei===exIdx && si===setIdx) return;
+        if (st.type!=='work' || !st.done) return;
+        consider(st);
+      });
+    });
+  }
+  return best;
+}
+
+// Ritorna {icon, msg, kind} se la serie appena chiusa è un record, altrimenti null
+function detectPR(exId, exIdx, setIdx) {
+  if (!state.activeSession) return null;
+  var ex = state.activeSession.exercises[exIdx];
+  if (!ex || !ex.sets[setIdx]) return null;
+  var set = ex.sets[setIdx];
+  if (set.type !== 'work') return null;
+  var w = set.weight||0, reps = set.reps||0;
+  if (!w || !reps) return null;   // senza carico non c'è un PR di peso confrontabile
+  var best = bestPerformanceBefore(exId, exIdx, setIdx);
+  if (!best.weight) return null;  // prima volta in assoluto: niente confronto
+  if (w > best.weight + 1e-9) {
+    return {kind:'weight', icon:'🏆', msg:'PR peso: '+fmtWeight(w)+' kg (era '+fmtWeight(best.weight)+' kg)'};
+  }
+  if (Math.abs(w - best.weight) < WEIGHT_STEP/2 && reps > best.reps) {
+    return {kind:'reps', icon:'🏆', msg:'PR ripetizioni: '+reps+' a '+fmtWeight(w)+' kg (era '+best.reps+')'};
+  }
+  var est = w * (1 + reps/30);
+  if (est > best.est1rm + 0.01) {
+    return {kind:'1rm', icon:'💪', msg:'1RM stimato: '+est.toFixed(1)+' kg (era '+best.est1rm.toFixed(1)+' kg)'};
+  }
+  return null;
 }
 
 // In-session increment
@@ -4446,11 +4774,16 @@ function confirmFinishSession() {
     var workSets=ex.sets.filter(function(s){return s.type==='work'&&s.done;});
     // guard weight/reps: bodyweight & power sets carry no load -> NaN otherwise
     var vol=workSets.reduce(function(a,s){return a+((s.weight||0)*(s.reps||0));},0);
-    totalVolume+=vol; totalSets+=workSets.length;
+    // "Per lato": ogni serie vale per entrambi i lati, quindi serie e volume ×2
+    var sides = (ex.config && ex.config.perSide) ? 2 : 1;
+    vol = vol * sides;
+    totalVolume+=vol; totalSets+=workSets.length*sides;
     return {
       exerciseId: ex.config.exerciseId,
       sets: workSets,
       volume: vol,
+      perSide: sides > 1,
+      substitutedFor: ex.config.substitutedFor || null,
       notes: ex.config.notes||'',
       increments: ex.config.increments || {weight:0,sets:0,reps:0,distance:0}
     };
@@ -4584,7 +4917,7 @@ function getAllWeeksVolume() {
 
 function getMuscleDistribution() {
   var dist={};
-  state.sessions.forEach(function(s){(s.exercises||[]).forEach(function(e){var ex=findExercise(e.exerciseId);if(ex)dist[ex.muscle]=(dist[ex.muscle]||0)+(e.sets?e.sets.length:0);});});
+  state.sessions.forEach(function(s){(s.exercises||[]).forEach(function(e){var ex=findExercise(e.exerciseId);if(ex)dist[ex.muscle]=(dist[ex.muscle]||0)+((e.sets?e.sets.length:0)*(e.perSide?2:1));});});
   return dist;
 }
 
@@ -4620,18 +4953,36 @@ function showSessionDetail(idx) {
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
+      // Sostituzione registrata in sessione: si vede al posto di cosa è stato fatto
+      var subHtml = '';
+      if (e.substitutedFor) {
+        var origEx = findExercise(e.substitutedFor);
+        subHtml = ' <span style="color:var(--warm);font-size:11px;font-weight:600">⇄ al posto di '+escapeHtml(origEx?origEx.name:'esercizio')+'</span>';
+      }
       return '<div style="margin-bottom:16px">'+
-        '<div class="font-bold" style="margin-bottom:4px">'+escapeHtml(ex.name)+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
+        '<div class="font-bold" style="margin-bottom:4px">'+escapeHtml(ex.name)+subHtml+
+          (e.perSide?' <span style="color:#1e90ff;font-size:11px;font-weight:600">×2 per lato</span>':'')+
+          (e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
         (e.sets||[]).map(function(set,i){
+          var line;
           if (isCarry) {
             var cw = set.weight ? set.weight+'kg × ' : '';
-            return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
+            line = 'Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe:'');
+          } else if (isCardio) {
+            line = 'Serie '+(i+1)+': '+(set.duration||0)+' min';
+          } else {
+            var load = set.weight ? set.weight+'kg × ' : '';
+            line = 'Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'');
           }
-          if (isCardio) {
-            return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+(set.duration||0)+' min</div>';
+          // Record e tag della serie
+          if (set.pr) line += ' <span style="color:var(--accent);font-weight:700">'+(set.pr.kind==='1rm'?'💪 1RM':'🏆 PR')+'</span>';
+          if (set.tags && set.tags.length) {
+            line += ' ' + set.tags.map(function(t){
+              return SET_TAGS[t] ? '<span style="font-size:11px" title="'+SET_TAGS[t].label+'">'+SET_TAGS[t].emoji+'</span>' : '';
+            }).join('');
           }
-          var load = set.weight ? set.weight+'kg × ' : '';
-          return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
+          var noteHtml = set.note ? '<div style="font-size:12px;color:var(--text3);padding-left:14px">📝 '+escapeHtml(set.note)+'</div>' : '';
+          return '<div style="font-size:13px;color:var(--text2);padding:2px 0">'+line+'</div>'+noteHtml;
         }).join('')+
         (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 '+escapeHtml(e.notes)+'</div>':'')+
         incHtml+
@@ -4663,7 +5014,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.7.0';
+var APP_VERSION = '4.8.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -5057,10 +5408,10 @@ document.querySelectorAll('.modal-overlay').forEach(function(o){o.addEventListen
 // TOAST
 // ============================================================
 var toastTimer=null;
-function showToast(msg){
+function showToast(msg, duration){
   var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
   if(toastTimer)clearTimeout(toastTimer);
-  toastTimer=setTimeout(function(){t.classList.remove('show');},2500);
+  toastTimer=setTimeout(function(){t.classList.remove('show');}, duration||2500);
 }
 
 // ============================================================
@@ -5168,9 +5519,16 @@ function editCurrentSession() {
     }
     return {
       exerciseId: e.exerciseId,
+      perSide: !!e.perSide,
+      substitutedFor: e.substitutedFor || null,
       sets: (e.sets||[]).map(function(set){
         set = set || {};
-        return {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, duration: set.duration||0, rpe: set.rpe||''};
+        // I campi nuovi (tag, nota, PR) viaggiano con la serie anche in modifica
+        var out = {weight: set.weight||0, reps: set.reps||0, distance: set.distance||0, duration: set.duration||0, rpe: set.rpe||''};
+        if (set.tags && set.tags.length) out.tags = set.tags.slice();
+        if (set.note) out.note = set.note;
+        if (set.pr) out.pr = set.pr;
+        return out;
       }),
       increments: inc ? normInc(inc) : normInc(null)
     };
@@ -5457,20 +5815,28 @@ function saveRetroSession() {
   var exercises = retroExercises.map(function(re){
     var isCarry = getExerciseType(re.exerciseId)==='carry';
     var isCardio = getExerciseType(re.exerciseId)==='cardio';
-    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*((isCarry||isCardio)?0:(s.reps||0)));},0);
-    totalVolume += vol; totalSets += re.sets.length;
+    var sides = re.perSide ? 2 : 1;
+    var vol = re.sets.reduce(function(a,s){return a+((s.weight||0)*((isCarry||isCardio)?0:(s.reps||0)));},0) * sides;
+    totalVolume += vol; totalSets += re.sets.length * sides;
     return {
       exerciseId: re.exerciseId,
       sets: re.sets.map(function(s){
-        return {
+        var out = {
           weight: isCardio ? 0 : (s.weight||0),
           reps: (isCarry||isCardio) ? 0 : (s.reps||0),
           distance: isCarry ? (s.distance||0) : 0,
           duration: isCardio ? (s.duration||0) : 0,
           rpe: isCardio ? '' : (s.rpe||''), type:'work', done:true
         };
+        // Non perdere tag/nota/PR quando si modifica una sessione
+        if (s.tags && s.tags.length) out.tags = s.tags.slice();
+        if (s.note) out.note = s.note;
+        if (s.pr) out.pr = s.pr;
+        return out;
       }),
       volume: vol,
+      perSide: sides > 1,
+      substitutedFor: re.substitutedFor || null,
       notes: '',
       increments: normInc(re.increments)
     };
