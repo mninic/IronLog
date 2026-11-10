@@ -1032,6 +1032,63 @@ function buildRepSelector(inputId, reps, exId, onchangeExpr) {
 }
 
 // ============================================================
+// IDENTIFICATIVI STABILI (Blocco C)
+// ============================================================
+// Template ed esercizi di template hanno un id stabile. La sessione salva
+// l'id, non la posizione: riordinare o rimuovere un esercizio non sposta
+// piu' la progressione su quello sbagliato. I dati vecchi (senza id) vengono
+// completati una volta sola al caricamento, senza perdere nulla.
+function newLocalId(prefix) {
+  return (prefix||'id') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+}
+
+function findTemplateById(id) {
+  if (!id) return null;
+  for (var i=0;i<state.templates.length;i++) {
+    if (state.templates[i] && state.templates[i].id === id) return state.templates[i];
+  }
+  return null;
+}
+
+function findTemplateIndexById(id) {
+  if (!id) return -1;
+  for (var i=0;i<state.templates.length;i++) {
+    if (state.templates[i] && state.templates[i].id === id) return i;
+  }
+  return -1;
+}
+
+// Idempotente: assegna gli id mancanti e collega le sessioni storiche al
+// template a cui appartenevano (usando l'indice salvato all'epoca).
+function ensureStableIds() {
+  (state.templates || []).forEach(function(t){
+    if (!t) return;
+    if (!t.id) t.id = newLocalId('tpl');
+    (t.exercises || []).forEach(function(e){
+      if (e && !e.id) e.id = newLocalId('ex');
+    });
+  });
+  (state.sessions || []).forEach(function(s){
+    if (!s || s.templateId) return;
+    if (s.templateIdx == null) return;
+    var t = state.templates[s.templateIdx];
+    if (t && t.id) s.templateId = t.id;
+  });
+}
+
+// Una sessione appartiene a un template? Le sessioni vecchie non hanno
+// templateId ma conservano templateIdx: si risolve al volo.
+function sessionInTemplate(s, templateId) {
+  if (!s || !templateId) return false;
+  if (s.templateId) return s.templateId === templateId;
+  if (s.templateIdx != null) {
+    var t = state.templates[s.templateIdx];
+    return !!(t && t.id === templateId);
+  }
+  return false;
+}
+
+// ============================================================
 // PROGRESSIONE & DELOAD AUTOMATICO
 // ============================================================
 // Rilegge lo storico, capisce se un esercizio ha "chiuso" la progressione
@@ -1047,9 +1104,12 @@ var PROG_STALL_DAYS  = 14;    // giorni fermi prima di segnalare che manca la pr
 
 // Una riga di log per sessione in cui l'esercizio e' stato eseguito.
 // oldest -> newest
-function exerciseLog(exId) {
+// Con templateId si guardano solo le sessioni di quella scheda: lo stesso
+// esercizio in due schede non condivide piu' storico, ultimo peso e consiglio.
+function exerciseLog(exId, templateId) {
   var out = [];
   (state.sessions||[]).forEach(function(s){
+    if (templateId && !sessionInTemplate(s, templateId)) return;
     var entry = null;
     (s.exercises||[]).forEach(function(e){ if (e.exerciseId===exId) entry = e; });
     if (!entry || !(entry.sets||[]).length) return;
@@ -1087,12 +1147,12 @@ function roundTo(v, step) { return Math.round(v/step)*step; }
 function round1(v) { return Math.round(v*10)/10; }
 
 // Analizza un esercizio: tetto raggiunto? carico salito? tecnica pulita?
-function analyzeExerciseProgress(exId) {
+function analyzeExerciseProgress(exId, templateId) {
   var ex = findExercise(exId);
   if (!ex) return null;
   var ladder = getRepProgression(exId);
   var minReps = ladder[0], maxReps = ladder[ladder.length-1];
-  var log = exerciseLog(exId);
+  var log = exerciseLog(exId, templateId);
   if (!log.length) return null;
 
   var loaded = log.some(function(r){ return r.weight>0; });
@@ -1125,6 +1185,7 @@ function analyzeExerciseProgress(exId) {
 
   var r = {
     exerciseId: exId,
+    templateId: templateId || null,
     name: ex.name,
     icon: ex.icon,
     category: ex.category,
@@ -1168,26 +1229,27 @@ function decideProgressionAction(r) {
 }
 
 // Config dell'esercizio dentro un template (o null se non e' in nessun template).
-// Con templateIdx si punta a un template preciso: serve quando un esercizio
+// Con templateId si punta a una scheda precisa: serve quando un esercizio
 // compare in piu' schede e bisogna aggiornarne solo una.
-function findTemplateExercise(exId, templateIdx) {
+function findTemplateExercise(exId, templateId) {
   for (var i=0;i<state.templates.length;i++) {
-    if (templateIdx!=null && i!==templateIdx) continue;
-    var list = state.templates[i].exercises||[];
+    var t = state.templates[i];
+    if (templateId && t.id !== templateId) continue;
+    var list = t.exercises||[];
     for (var j=0;j<list.length;j++) {
-      if (list[j].exerciseId===exId) return {templateIdx:i, exIdx:j, cfg:list[j], template:state.templates[i]};
+      if (list[j].exerciseId===exId) return {templateIdx:i, templateId:t.id, exIdx:j, cfg:list[j], template:t};
     }
   }
   return null;
 }
 
 // Dove trovare i valori attuali: template se presente, altrimenti ultima sessione
-function currentPrescription(exId, templateIdx) {
+function currentPrescription(exId, templateId) {
   var isCarry = getExerciseType(exId)==='carry';
-  var found = findTemplateExercise(exId, templateIdx);
+  var found = findTemplateExercise(exId, templateId);
   // per i carry 'reps' ospita i metri: serve solo ai calcoli interni della scheda
   if (found) return {found:found, cfg:found.cfg, weight:snapWeight(found.cfg.weight), sets:found.cfg.sets||0, reps:isCarry?(found.cfg.distance||0):(found.cfg.reps||0), rest:found.cfg.rest||0};
-  var log = exerciseLog(exId);
+  var log = exerciseLog(exId, templateId);
   var last = log.length ? log[log.length-1] : null;
   return {found:null, cfg:null, weight:last?snapWeight(last.weight):0, sets:last?last.sets:0, reps:last?last.val:0, rest:0};
 }
@@ -1195,8 +1257,8 @@ function currentPrescription(exId, templateIdx) {
 // Passo di progressione: +carico, si riparte dal minimo della progressione.
 // Il salto resta sempre multiplo di 0,5 kg (vedi WEIGHT_STEP).
 // I carry aggiungono anche il passo in metri.
-function progressionPrescription(exId, templateIdx) {
-  var p = currentPrescription(exId, templateIdx);
+function progressionPrescription(exId, templateId) {
+  var p = currentPrescription(exId, templateId);
   var ladder = getRepProgression(exId);
   var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
@@ -1222,8 +1284,8 @@ function progressionPrescription(exId, templateIdx) {
 
 // Deload: -30% carico, -50% serie, rep verso la meta' della progressione.
 // Sui carry la distanza resta invariata: lo scarico riguarda carico e serie.
-function deloadPrescription(exId, templateIdx) {
-  var p = currentPrescription(exId, templateIdx);
+function deloadPrescription(exId, templateId) {
+  var p = currentPrescription(exId, templateId);
   var ladder = getRepProgression(exId);
   var isCarry = getExerciseType(exId)==='carry';
   var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
@@ -1241,18 +1303,26 @@ function deloadPrescription(exId, templateIdx) {
   };
 }
 
-// Applica il consiglio al template che contiene l'esercizio
-function applyProgressionAdvice(exId, action, templateIdx) {
-  var r = analyzeExerciseProgress(exId);
+// Applica il consiglio al template che contiene l'esercizio.
+// Salva anche un marcatore (7.2): data del consiglio e ultima sessione vista.
+// Finché non arriva una nuova sessione dello stesso esercizio nella stessa
+// scheda, il consiglio resta nascosto e non si può applicare due volte.
+function applyProgressionAdvice(exId, action, templateId) {
+  var r = analyzeExerciseProgress(exId, templateId);
   if (!r) return;
-  var p = currentPrescription(exId, templateIdx);
+  var p = currentPrescription(exId, templateId);
   // il consiglio viene generato solo dagli esercizi presenti in un template,
   // ma il template puo' essere stato cancellato nel frattempo
   if (!p.found) { showToast('Esercizio non presente nel template'); return; }
 
   var isDeload = (action==='deload');
-  var presc = isDeload ? deloadPrescription(exId, templateIdx) : progressionPrescription(exId, templateIdx);
+  var presc = isDeload ? deloadPrescription(exId, templateId) : progressionPrescription(exId, templateId);
   var cfg = p.found.cfg;
+  // Doppio tocco o consiglio già applicato: non sommare un altro passo (7.2).
+  if (adviceBlocked(cfg, exId, templateId)) {
+    showToast('Consiglio già applicato: registra una nuova sessione');
+    return;
+  }
   var isCarry = getExerciseType(exId)==='carry';
   var unit = isCarry ? 'm' : ' rip';
   var tplName = p.found.template ? p.found.template.name : '';
@@ -1273,10 +1343,28 @@ function applyProgressionAdvice(exId, action, templateIdx) {
     cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+nextVal+unit+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
     showToast('Progressione su "'+tplName+'": '+r.name+' '+presc.loadLabel);
   }
+
+  var log = exerciseLog(exId, templateId);
+  cfg.advice = {
+    at: new Date().toISOString(),
+    lastSessionAt: log.length ? (log[log.length-1].date || '') : ''
+  };
+
   saveState();
   renderTemplates();
   renderHome();
   renderProgressionAdvisor();
+}
+
+// Un consiglio già applicato resta nascosto finché non viene registrata una
+// nuova sessione dello stesso esercizio nella stessa scheda (7.2).
+function adviceBlocked(cfg, exId, templateId) {
+  if (!cfg || !cfg.advice) return false;
+  var log = exerciseLog(exId, templateId);
+  if (!log.length) return true;
+  var lastDate = log[log.length-1].date || '';
+  var seen = cfg.advice.lastSessionAt || '';
+  return lastDate <= seen;
 }
 
 // Elenco dei consigli, deload prima.
@@ -1285,20 +1373,25 @@ function applyProgressionAdvice(exId, action, templateIdx) {
 // Se lo stesso esercizio vive in piu' schede esce una riga per ognuna e
 // ciascuna riga aggiorna il solo template di riferimento.
 function getProgressionAdvice() {
-  var templates = state.templates || [];
-  var keys = {};
-  templates.forEach(function(t, ti){
-    (t.exercises||[]).forEach(function(e){ if (e && e.exerciseId) keys[e.exerciseId+'|'+ti]=true; });
-  });
   var out = [];
-  Object.keys(keys).forEach(function(k){
-    var sep = k.lastIndexOf('|');
-    var id = k.slice(0, sep), ti = parseInt(k.slice(sep+1), 10);
-    var r = analyzeExerciseProgress(id);
-    if (!r || !r.action) return;
-    r.templateIdx = ti;
-    r.templateName = templates[ti] ? (templates[ti].name || '') : '';
-    out.push(r);
+  (state.templates || []).forEach(function(t){
+    if (!t || !t.id) return;
+    var seen = {};
+    (t.exercises||[]).forEach(function(e){
+      if (!e || !e.exerciseId) return;
+      var key = e.id || e.exerciseId;
+      if (seen[key]) return;
+      seen[key] = true;
+      // Consiglio già applicato: resta nascosto finché non c'è una nuova
+      // sessione per questo esercizio in questa scheda (7.2).
+      if (adviceBlocked(e, e.exerciseId, t.id)) return;
+      var r = analyzeExerciseProgress(e.exerciseId, t.id);
+      if (!r || !r.action) return;
+      r.templateId = t.id;
+      r.templateIdx = findTemplateIndexById(t.id);
+      r.templateName = t.name || '';
+      out.push(r);
+    });
   });
   out.sort(function(a,b){
     if (a.action!==b.action) return a.action==='deload' ? -1 : 1;
@@ -1346,7 +1439,7 @@ function renderProgressionAdvisor() {
 
   list.forEach(function(r){
     var isDeload = r.action==='deload';
-    var presc = isDeload ? deloadPrescription(r.exerciseId, r.templateIdx) : progressionPrescription(r.exerciseId, r.templateIdx);
+    var presc = isDeload ? deloadPrescription(r.exerciseId, r.templateId) : progressionPrescription(r.exerciseId, r.templateId);
     var color = isDeload ? 'var(--green)' : 'var(--accent)';
     var tag = isDeload ? 'DELOAD' : 'PROGRESSI';
     var title = isDeload ? 'Tetto raggiunto, scarica' : 'Aumenta il carico';
@@ -1366,7 +1459,7 @@ function renderProgressionAdvisor() {
       '</div>'+
       '<div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+body+'</div>'+
       '<div class="flex gap-8">'+
-        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\','+r.templateIdx+')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
+        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\',\''+r.templateId+'\')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
         '<button class="btn btn-xs btn-secondary" onclick="showPage(\'template\')">Apri scheda</button>'+
       '</div></div>';
   });
@@ -2183,6 +2276,9 @@ function _applyState(p) {
       if (e && e.config && e.config.increments) e.config.increments.weight = snapWeight(e.config.increments.weight);
     });
   });
+  // Blocco C: completa gli id mancanti e collega le sessioni vecchie al
+  // template di appartenenza (una volta sola, poi restano stabili).
+  ensureStableIds();
   state.deletedBuiltins = p.deletedBuiltins || [];
   state.hiddenExercises = p.hiddenExercises || [];
   state.builtinOverrides= p.builtinOverrides|| {};
@@ -2860,7 +2956,15 @@ function saveTemplate() {
   var name = document.getElementById('tpl-name').value.trim();
   if (!name) { showToast('Inserisci un nome'); return; }
   if (!editingTemplateExercises.length) { showToast('Aggiungi almeno un esercizio'); return; }
-  var tpl = {name:name, color:editingTemplateColor, notes:document.getElementById('tpl-notes').value, exercises:editingTemplateExercises};
+  // L'id resta lo stesso quando si modifica una scheda esistente: le sessioni
+  // già salvate continuano a puntare alla scheda giusta (7.4).
+  var prev = editingTemplateIdx!==null ? state.templates[editingTemplateIdx] : null;
+  editingTemplateExercises.forEach(function(e){ if (e && !e.id) e.id = newLocalId('ex'); });
+  var tpl = {
+    id: (prev && prev.id) || newLocalId('tpl'),
+    name:name, color:editingTemplateColor, notes:document.getElementById('tpl-notes').value,
+    exercises:editingTemplateExercises
+  };
   if (editingTemplateIdx!==null) state.templates[editingTemplateIdx]=tpl;
   else state.templates.push(tpl);
   saveState();
@@ -2939,7 +3043,10 @@ function selectExercise(exId) {
   configExerciseIdx = null;
   openExerciseConfig(exId, null);
   // Apply: last session values + last progression, then zero out progression and RPE
-  var last = getLastSessionDataForExercise(exId);
+  // Con una scheda in modifica si guarda solo lo storico di quella scheda (7.5).
+  var editingTplId = (editingTemplateIdx!==null && state.templates[editingTemplateIdx])
+    ? state.templates[editingTemplateIdx].id : null;
+  var last = getLastSessionDataForExercise(exId, editingTplId);
   if (last) {
     var inc = last.increments || {weight:0,sets:0,reps:0,distance:0};
     document.getElementById('cfg-sets').value   = Math.max(1, last.sets   + (inc.sets||0));
@@ -3203,13 +3310,26 @@ function saveExerciseConfig() {
     increments:{weight:increments.weight,sets:increments.sets,reps:increments.reps,distance:increments.distance||0},
   };
   if (pickerMode==='template') {
-    if (configExerciseIdx!==null) editingTemplateExercises[configExerciseIdx]=cfg;
+    if (configExerciseIdx!==null) {
+      // Conserva id stabile e marcatore del consiglio: modificare la config
+      // non deve scollegare la scheda dalle sessioni né far riapparire un
+      // consiglio già applicato (7.2 / 7.4).
+      var prevCfg = editingTemplateExercises[configExerciseIdx];
+      if (prevCfg && prevCfg.id) cfg.id = prevCfg.id;
+      if (prevCfg && prevCfg.advice) cfg.advice = prevCfg.advice;
+      editingTemplateExercises[configExerciseIdx]=cfg;
+    }
     else editingTemplateExercises.push(cfg);
     closeModal('modal-exercise-config');
     renderTplExerciseList();
     showToast('Esercizio salvato');
   } else {
-    if (configExerciseIdx!==null) state.activeSession.exercises[configExerciseIdx].config=cfg;
+    if (configExerciseIdx!==null) {
+      var prevSessCfg = state.activeSession.exercises[configExerciseIdx].config;
+      if (prevSessCfg && prevSessCfg.templateExerciseId) cfg.templateExerciseId = prevSessCfg.templateExerciseId;
+      if (prevSessCfg && prevSessCfg.fixedIncrements) cfg.fixedIncrements = prevSessCfg.fixedIncrements;
+      state.activeSession.exercises[configExerciseIdx].config=cfg;
+    }
     else state.activeSession.exercises.push(buildSessionExercise(cfg));
     closeModal('modal-exercise-config');
     renderSessionExercises();
@@ -3307,10 +3427,13 @@ function renderAllenamento() {
   }
 }
 
-// Returns {sets, reps, weight, increments} from the most recent session containing exId
-function getLastSessionDataForExercise(exId) {
+// Returns {sets, reps, weight, distance, duration, increments} from the most
+// recent session containing exId. Con templateId si limita alla sola scheda:
+// lo stesso esercizio in due schede non si "contamina" (7.5).
+function getLastSessionDataForExercise(exId, templateId) {
   for (var i = state.sessions.length - 1; i >= 0; i--) {
     var s = state.sessions[i];
+    if (templateId && !sessionInTemplate(s, templateId)) continue;
     var e = (s.exercises||[]).find(function(ex){ return ex.exerciseId === exId; });
     if (e && e.sets && e.sets.length) {
       var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
@@ -3322,6 +3445,8 @@ function getLastSessionDataForExercise(exId) {
         sets: setsToUse.length,
         reps: lastSet.reps || 10,
         weight: maxW,
+        distance: lastSet.distance || 0,
+        duration: lastSet.duration || 0,
         rest: rest,
         increments: e.increments || {weight:0,sets:0,reps:0,distance:0}
       };
@@ -3336,17 +3461,16 @@ function buildSessionExercise(cfg) {
   var effectiveCfg = Object.assign({}, cfg);
   // Resolve the extra-load flag once (config value, else exercise default)
   effectiveCfg.allowWeight = cfgAllowsWeight(effectiveCfg);
-  // For strength/bodyweight: try last session data
-  if (exType === 'strength' || exType === 'bodyweight') {
-    var last = getLastSessionDataForExercise(cfg.exerciseId);
-    if (last) {
-      var inc = last.increments || {weight:0,sets:0,reps:0,distance:0};
-      if (effectiveCfg.allowWeight) effectiveCfg.weight = snapWeight(last.weight+(inc.weight||0));
-      effectiveCfg.reps = Math.max(1, last.reps+(inc.reps||0));
-      effectiveCfg.sets = cfg.sets;
-      effectiveCfg.rest = cfg.rest || 120;
-    }
-  }
+  // Blocco C (7.1): la scheda è l'unica fonte della prescrizione.
+  // Lo storico non sostituisce più peso e ripetizioni: viene solo mostrato
+  // come "ultima volta" nella sessione. Così il consiglio applicato arriva
+  // davvero all'allenamento successivo.
+  effectiveCfg.weight = snapWeight(effectiveCfg.weight || 0);
+  // Riferimento stabile all'esercizio della scheda (7.4): a fine sessione si
+  // aggiorna quello giusto anche dopo riordini o rimozioni.
+  effectiveCfg.templateExerciseId = cfg.id || null;
+  // L'incremento fisso della scheda resta disponibile come passo suggerito.
+  effectiveCfg.fixedIncrements = normInc(cfg.increments);
   effectiveCfg.increments = {weight:0,sets:0,reps:0,distance:0};
   effectiveCfg.rpe = '';
   effectiveCfg.exerciseType = exType;
@@ -3376,14 +3500,14 @@ function buildSessionExercise(cfg) {
 
 function startSessionFromTemplate(idx) {
   var t = state.templates[idx];
-  state.activeSession = {name:t.name, templateIdx:idx, startTime:Date.now(), exercises:t.exercises.map(buildSessionExercise)};
+  state.activeSession = {name:t.name, templateIdx:idx, templateId:t.id||null, startTime:Date.now(), exercises:t.exercises.map(buildSessionExercise)};
   startSessionTimer();
   requestWakeLock();
   showPage('allenamento');
 }
 
 function startBlankSession() {
-  state.activeSession = {name:'Sessione libera', templateIdx:null, startTime:Date.now(), exercises:[]};
+  state.activeSession = {name:'Sessione libera', templateIdx:null, templateId:null, startTime:Date.now(), exercises:[]};
   startSessionTimer();
   requestWakeLock();
   showPage('allenamento');
@@ -3523,7 +3647,15 @@ function renderSessionExercises() {
         var label = isCarry ? 'distanza: ' : isCardio ? 'durata: ' : 'rip: ';
         var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+unit+'</span>';
         var noteTxt = ex.config.notes ? '<span>'+escapeHtml(ex.config.notes)+'</span> · ' : '';
-        return '<div class="ex-note-bar">'+noteTxt+label+progStr+'</div>';
+        // "Ultima volta" è solo informativo: la prescrizione viene dalla scheda (7.1).
+        var lastTxt = '';
+        var lastData = getLastSessionDataForExercise(ex.config ? ex.config.exerciseId : null,
+          state.activeSession ? state.activeSession.templateId : null);
+        if (lastData) {
+          lastTxt = '<div style="margin-top:3px;color:var(--text3);font-size:11px">ultima volta: '+
+            escapeHtml(fmtLastSession(lastData, exType))+'</div>';
+        }
+        return '<div class="ex-note-bar">'+noteTxt+label+progStr+lastTxt+'</div>';
       })()+
       '</div>';
   }).join('')+
@@ -3639,16 +3771,36 @@ function changeSI(field,delta) {
     if (field === 'distance') siIncrements.distance = newTarget - current;
     else siIncrements.reps = newTarget - current;
   } else if (field === 'weight') {
-    // Tieni il delta sempre sulla griglia da 0,5 kg, così si torna a 0 esatto
-    siIncrements.weight = snapWeight(siIncrements.weight + delta);
+    // Il passo è l'incremento fisso della scheda (7.3), altrimenti 0,5 kg.
+    // Il delta resta sempre sulla griglia da 0,5 così torna a 0 esatto.
+    var fixedW = (ex && ex.config && ex.config.fixedIncrements && ex.config.fixedIncrements.weight) || WEIGHT_STEP;
+    siIncrements.weight = snapWeight(siIncrements.weight + delta*fixedW);
   } else {
     siIncrements[field] = Math.round((siIncrements[field]+delta)*10)/10;
   }
   updateSIDisplay();
 }
 
-// Valore corrente su cui calcolare il delta: ripetizioni, metri per i carry,
-// minuti per il cardio.
+// Riga compatta con i valori dell'ultima sessione, solo per informazione.
+function fmtLastSession(d, exType) {
+  if (!d) return '';
+  var parts = [];
+  if (exType==='carry') {
+    if (d.distance) parts.push(d.distance+' m');
+    if (d.weight) parts.push(fmtWeight(d.weight)+' kg');
+  } else if (exType==='cardio') {
+    if (d.duration) parts.push(d.duration+' min');
+  } else if (exType==='timed') {
+    if (d.duration) parts.push(d.duration+' s');
+    if (d.weight) parts.push(fmtWeight(d.weight)+' kg');
+  } else {
+    if (d.weight) parts.push(fmtWeight(d.weight)+' kg');
+    if (d.reps) parts.push(d.reps+' rip');
+  }
+  if (!parts.length) parts.push((d.sets||0)+' serie');
+  return parts.join(' × ');
+}
+
 function getCurrentSIValue(ex, progression, isCarry, isCardio) {
   if (!ex) return progression[0];
   var workSets = ex.sets ? ex.sets.filter(function(s){ return s.type==='work'; }) : [];
@@ -4006,39 +4158,48 @@ function confirmFinishSession() {
     return;
   }
 
-  // Apply actual performed values + increments to template
-  if (state.activeSession.templateIdx !== null) {
-    var tpl = state.templates[state.activeSession.templateIdx];
-    if (tpl) state.activeSession.exercises.forEach(function(sexe, i) {
-      var cfg = tpl.exercises[i]; if (!cfg) return;
-      var inc = normInc(sexe.config.increments);
-      var sType = sexe.config.exerciseType || getExerciseType(sexe.config.exerciseId);
-      // FIX 2: applica progressione SOLO se sono state completate serie per questo esercizio
-      var workSets = sexe.sets.filter(function(s){ return s.type==='work' && s.done; });
-      if (workSets.length) {
-        var maxW = Math.max.apply(null, workSets.map(function(s){ return s.weight||0; }));
-        var lastSet = workSets[workSets.length-1];
-        cfg.weight = snapWeight(maxW + (inc.weight||0));
-        cfg.sets = Math.max(1, workSets.length + (inc.sets||0));
-        if (sType==='carry') {
-          // sui carry si progredisce in metri: reps resta a 0 così il template non moltiplica NaN
-          var maxDist = Math.max.apply(null, workSets.map(function(s){ return s.distance||0; }));
-          cfg.distance = Math.max(0, maxDist + (inc.distance||0));
-          cfg.reps = 0;
-        } else if (sType==='cardio') {
-          // il cardio progedisce in minuti: il delta è in inc.reps, reps resta 0
-          var maxDur = Math.max.apply(null, workSets.map(function(s){ return s.duration||0; }));
-          cfg.duration = Math.max(0, maxDur + (inc.reps||0));
-          cfg.reps = 0;
-        } else {
-          cfg.reps = Math.max(1, (lastSet.reps||1) + (inc.reps||0));
-        }
-        cfg.increments = inc;
+  // Blocco C (7.3): la prestazione NON riscrive la prescrizione.
+  // Il template cambia solo se nella sessione è stato scelto un delta
+  // esplicito nel pannello "Progressione". L'incremento fisso della scheda
+  // resta invariato (prima veniva sostituito dal delta della sessione, di
+  // solito 0, e spariva dopo il primo allenamento).
+  var activeTpl = findTemplateById(state.activeSession.templateId) ||
+    (state.activeSession.templateIdx !== null && state.activeSession.templateIdx !== undefined
+      ? state.templates[state.activeSession.templateIdx] : null);
+  if (activeTpl) {
+    var byTplExId = {};
+    (activeTpl.exercises || []).forEach(function(c){ if (c && c.id) byTplExId[c.id] = c; });
+    state.activeSession.exercises.forEach(function(sexe){
+      var sCfg = sexe.config || {};
+      // Abbinamento per id (7.4); la posizione resta solo come ripiego per
+      // sessioni salvate da versioni precedenti.
+      var cfg = (sCfg.templateExerciseId && byTplExId[sCfg.templateExerciseId]) || null;
+      if (!cfg && sCfg.exerciseId) {
+        cfg = (activeTpl.exercises || []).filter(function(c){ return c && c.exerciseId === sCfg.exerciseId; })[0] || null;
       }
-      // Se nessuna serie completata: non toccare cfg, non applicare progressione
+      if (!cfg) return;
+      var inc = normInc(sCfg.increments);
+      if (!hasInc(inc)) return;   // nessuna decisione esplicita: scheda invariata
+      var sType = cfg.exerciseType || getExerciseType(cfg.exerciseId);
+      if (sType==='carry') {
+        cfg.distance = Math.max(0, (cfg.distance||0) + (inc.distance||0));
+        cfg.reps = 0;
+      } else if (sType==='cardio') {
+        cfg.duration = Math.max(0, (cfg.duration||0) + (inc.reps||0));
+        cfg.reps = 0;
+      } else {
+        if (cfgAllowsWeight(cfg) && cfg.weight !== undefined) {
+          cfg.weight = snapWeight((cfg.weight||0) + (inc.weight||0));
+        }
+        if (cfg.reps !== undefined) {
+          var ladder = getRepProgression(cfg.exerciseId);
+          cfg.reps = Math.max(1, snapToProgression((cfg.reps||ladder[0]) + (inc.reps||0), ladder));
+        }
+      }
+      cfg.sets = Math.max(1, (cfg.sets||3) + (inc.sets||0));
     });
   }
-  state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx});
+  state.sessions.push({date:new Date().toISOString(),name:state.activeSession.name,duration:duration,exercises:exercises,totalVolume:totalVolume,totalSets:totalSets,templateIdx:state.activeSession.templateIdx,templateId:state.activeSession.templateId||null});
   state.activeSession=null;
   saveState();
   showToast('Sessione salvata!');
@@ -4195,7 +4356,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.5.0';
+var APP_VERSION = '4.6.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -4658,8 +4819,8 @@ function isoFromLocalDate(value, baseIso) {
 // Incrementi di un esercizio dentro un template, con guardie sui dati
 // vecchi/parziali (template senza exercises, esercizio rimosso, ecc.).
 // Ritorna null se non ci sono incrementi.
-function templateIncrements(tIdx, exId) {
-  var tpl = state.templates ? state.templates[tIdx] : null;
+function templateIncrements(templateId, exId) {
+  var tpl = findTemplateById(templateId);
   if (!tpl || !tpl.exercises) return null;
   for (var i=0; i<tpl.exercises.length; i++) {
     var te = tpl.exercises[i];
@@ -4686,11 +4847,15 @@ function editCurrentSession() {
     // 1) salvati sull'esercizio
     var inc = hasInc(e.increments) ? e.increments : null;
     // 2) template collegato alla sessione
-    if (!inc && s.templateIdx != null) inc = templateIncrements(s.templateIdx, e.exerciseId);
+    if (!inc && s.templateId) inc = templateIncrements(s.templateId, e.exerciseId);
+    if (!inc && s.templateIdx != null) {
+      var legacyTpl = state.templates[s.templateIdx];
+      if (legacyTpl && legacyTpl.id) inc = templateIncrements(legacyTpl.id, e.exerciseId);
+    }
     // 3) qualunque template
     if (!inc && state.templates) {
       for (var t=0; t<state.templates.length; t++) {
-        inc = templateIncrements(t, e.exerciseId);
+        inc = templateIncrements(state.templates[t].id, e.exerciseId);
         if (inc) break;
       }
     }
@@ -5132,8 +5297,13 @@ function importDefaultProgram() {
   preset.forEach(function(p){
     var idx = -1;
     for (var i=0;i<state.templates.length;i++) { if (state.templates[i].name === p.name) { idx = i; break; } }
-    if (idx > -1) state.templates[idx] = p; else { state.templates.push(p); added++; }
+    if (idx > -1) {
+      // Conserva l'id: le sessioni già registrate restano collegate a questa scheda.
+      p.id = state.templates[idx].id || p.id;
+      state.templates[idx] = p;
+    } else { state.templates.push(p); added++; }
   });
+  ensureStableIds();
   saveState();
   renderTemplates();
   renderHome();
@@ -5150,6 +5320,7 @@ function _initApp() {
   // nulla: il prossimo sync potrebbe sovrascrivere dati esistenti.
   if (!state.templates.length && !cloudBlocked) {
     state.templates = defaultProgramTemplates();
+    ensureStableIds();
     saveState();
   }
   // If a session was in progress when page was closed, go straight to it
