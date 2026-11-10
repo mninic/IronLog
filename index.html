@@ -330,6 +330,8 @@ select.input{appearance:none}
     <button class="btn btn-primary btn-full" onclick="exportData()" style="margin-bottom:10px">⬇️ Esporta JSON</button>
     <button class="btn btn-ghost btn-full" onclick="document.getElementById('import-file-input').click()">⬆️ Importa JSON</button>
     <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importData(event)">
+    <div id="last-export-info" style="font-size:12px;color:var(--text3);margin-top:10px"></div>
+    <button id="restore-snapshot-btn" class="btn btn-ghost btn-full" onclick="restorePreImportSnapshot()" style="display:none;margin-top:10px">↩️ Ripristina dati prima dell'ultimo import</button>
   </div>
   <div class="card">
     <div class="card-title">ℹ️ App</div>
@@ -1340,8 +1342,8 @@ function renderProgressionAdvisor() {
 
     html += '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">'+
       '<div class="flex justify-between items-center" style="margin-bottom:5px">'+
-        '<div style="font-size:14px;font-weight:700;color:var(--text)">'+(r.icon||'')+' '+r.name+
-          (r.templateName?'<div style="font-size:10px;font-weight:600;color:var(--text3);margin-top:2px">scheda: '+r.templateName+'</div>':'')+'</div>'+
+        '<div style="font-size:14px;font-weight:700;color:var(--text)">'+escapeHtml(r.icon||'')+' '+escapeHtml(r.name)+
+          (r.templateName?'<div style="font-size:10px;font-weight:600;color:var(--text3);margin-top:2px">scheda: '+escapeHtml(r.templateName)+'</div>':'')+'</div>'+
         '<div style="font-size:10px;font-weight:800;letter-spacing:0.5px;padding:2px 7px;border-radius:20px;background:'+color+';color:#000">'+tag+'</div>'+
       '</div>'+
       '<div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+body+'</div>'+
@@ -1504,6 +1506,43 @@ try {
 }
 let currentUser = null;
 let syncPending = false;
+var cloudBlocked = false;             // lettura cloud fallita: sync sospeso
+var cloudReadStatus = 'unknown';      // 'ok' | 'empty' | 'error'
+var cloudReadError = '';
+var _knownCloudSessions = null;       // ultimo numero di sessioni visto nel cloud
+var _lastUploadedTs = 0;              // per ignorare l'eco realtime del nostro upload
+var _syncInFlight = false;
+var _cloudRetryTimer = null;
+var _uploadBlockedByGuard = false;
+var _forceUploadApproved = false;
+var _pendingSince = 0;                // quando è iniziata l'attesa di sync
+var _bannerTimer = null;
+
+// Segna "modifiche in coda" senza far lampeggiare il banner a ogni salvataggio:
+// il banner compare solo se l'attesa supera qualche secondo.
+function _markSyncPending() {
+  if (!syncPending) _pendingSince = Date.now();
+  syncPending = true;
+  clearTimeout(_bannerTimer);
+  _bannerTimer = setTimeout(updateCloudBanner, 5200);
+}
+function _clearSyncPending() {
+  syncPending = false;
+  _pendingSince = 0;
+  clearTimeout(_bannerTimer);
+}
+
+// Conteggio sessioni noto nel cloud: serve alla guardia anti-perdita.
+// Resta in localStorage per poterlo usare anche prima della prossima lettura.
+try {
+  var _kn = localStorage.getItem('ironlog_cloud_sessions');
+  if (_kn !== null && isFinite(parseInt(_kn,10))) _knownCloudSessions = parseInt(_kn,10);
+} catch(e) {}
+
+function setKnownCloudSessions(n) {
+  _knownCloudSessions = Math.max(0, parseInt(n,10) || 0);
+  try { localStorage.setItem('ironlog_cloud_sessions', String(_knownCloudSessions)); } catch(e) {}
+}
 
 function showSyncIndicator(text) {
   var el = document.getElementById('sync-indicator');
@@ -1514,8 +1553,63 @@ function showSyncIndicator(text) {
   if (text.startsWith('✅')) el._hide = setTimeout(function(){ el.style.display='none'; }, 2000);
 }
 
+// Banner persistente: cloud non letto, modifiche in coda o upload bloccato.
+function updateCloudBanner() {
+  var el = document.getElementById('cloud-banner');
+  if (!el) return;
+  var showPending = syncPending && _pendingSince && (Date.now() - _pendingSince > 5000);
+  if (!currentUser || (!cloudBlocked && !_uploadBlockedByGuard && !showPending)) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  var title, body;
+  if (cloudBlocked) {
+    title = '☁️ Cloud non raggiunto';
+    body = 'Sincronizzazione sospesa: i dati locali restano intatti. Riprova quando la connessione torna disponibile.';
+  } else if (_uploadBlockedByGuard) {
+    title = '⚠️ Upload bloccato';
+    body = 'Il cloud contiene più sessioni di questo dispositivo. Controlla i dati prima di sovrascrivere.';
+  } else {
+    title = '⏳ Modifiche non sincronizzate';
+    body = 'Verranno inviate appena la connessione torna disponibile.';
+  }
+  el.style.display = 'block';
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,159,67,0.14);border-bottom:1px solid rgba(255,159,67,0.5);color:var(--text);font-size:12px;line-height:1.35">'+
+    '<div style="flex:1"><b>'+title+'</b><br><span style="color:var(--text2)">'+body+'</span></div>'+
+    '<button class="btn btn-xs btn-secondary" onclick="retrySyncFromBanner()">Riprova</button>'+
+  '</div>';
+}
+
+function retrySyncFromBanner() {
+  if (!currentUser) return;
+  if (cloudBlocked) { retryCloudNow(); return; }
+  // Un tocco esplicito sblocca la guardia: syncToCloud chiederà di nuovo conferma.
+  if (_uploadBlockedByGuard) { _uploadBlockedByGuard = false; _forceUploadApproved = false; }
+  syncToCloud();
+}
+
 async function syncToCloud() {
   if (!currentUser) return;
+  if (_syncInFlight) { _markSyncPending(); return; }
+  if (cloudBlocked) { _markSyncPending(); updateCloudBanner(); return; }
+  if (_uploadBlockedByGuard && !_forceUploadApproved) { _markSyncPending(); updateCloudBanner(); return; }
+
+  var localCount = (state.sessions || []).length;
+  // Guardia anti-perdita: non sovrascrivere il cloud con meno sessioni.
+  // Si bypassa solo dopo una decisione esplicita (eliminazione, import, ripristino).
+  if (!_forceUploadApproved && _knownCloudSessions != null && _knownCloudSessions > 0 && localCount < _knownCloudSessions) {
+    var proceed = confirm('Il cloud contiene ' + _knownCloudSessions + ' sessioni, questo dispositivo ' + localCount + '.\n\nPossibile perdita di dati. Vuoi caricare comunque i dati locali?');
+    if (!proceed) {
+      _uploadBlockedByGuard = true;
+      _markSyncPending();
+      showSyncIndicator('⚠️ Upload bloccato');
+      updateCloudBanner();
+      return;
+    }
+  }
+
+  _syncInFlight = true;
   showSyncIndicator('⏳ Sync...');
   try {
     var now = new Date().toISOString();
@@ -1540,35 +1634,149 @@ async function syncToCloud() {
       updated_at: now
     }, { onConflict: 'user_id' });
     if (error) throw error;
-    syncPending = false;
+    _forceUploadApproved = false;
+    _uploadBlockedByGuard = false;
+    _lastUploadedTs = new Date(now).getTime();
+    setKnownCloudSessions((toSave.sessions || []).length);
+    if (state.last_updated !== now) {
+      // Lo stato è cambiato mentre l'upload era in corso: rimanda il salvataggio.
+      _markSyncPending();
+      clearTimeout(_syncDebounceTimer);
+      _syncDebounceTimer = setTimeout(function(){
+        _syncDebounceTimer = null;
+        syncToCloud();
+      }, 1000);
+    } else {
+      _clearSyncPending();
+    }
     showSyncIndicator('✅ Salvato');
+    updateCloudBanner();
   } catch(e) {
-    syncPending = true;
+    _markSyncPending();
     showSyncIndicator('⚠️ Offline');
+    updateCloudBanner();
+  } finally {
+    _syncInFlight = false;
   }
 }
 
-// Fetches cloud state and returns it (with its timestamp) without applying it yet.
-// The caller (_onLogin) decides which source wins based on timestamps.
+// Fetches cloud state and returns an explicit result:
+//   {status:'ok', state, last_updated} | {status:'empty'} | {status:'error', error}
+// Un errore di rete NON è "nessun dato": senza questa distinzione l'app
+// poteva creare i template di default e sovrascrivere il cloud.
 async function loadFromCloud() {
-  if (!currentUser) return null;
+  if (!currentUser) return {status:'error', error:'Utente non autenticato'};
   try {
     var { data, error } = await supa
       .from('user_data')
       .select('state, updated_at')
       .eq('user_id', currentUser.id)
       .single();
-    if (error || !data) return null;
+    if (error) {
+      var code = String(error.code || '');
+      var msg  = String(error.message || '');
+      // PGRST116 = .single() con zero righe: il cloud è vuoto, non è un errore.
+      if (code === 'PGRST116' || /0 rows|no rows/i.test(msg)) return {status:'empty'};
+      return {status:'error', error:msg || code || 'Errore di lettura'};
+    }
+    if (!data || !data.state) return {status:'empty'};
     return {
+      status: 'ok',
       state: data.state,
       // Prefer the timestamp stored inside the payload (more accurate);
       // fall back to the updated_at column
       last_updated: (data.state && data.state.last_updated) || data.updated_at || null
     };
   } catch(e) {
-    return null;
+    return {status:'error', error:(e && e.message) || 'Errore di rete'};
   }
 }
+
+function _readLocalState() {
+  try {
+    var raw = localStorage.getItem('ironlog_v3');
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+
+function _stateHasData(p) {
+  return !!(p && (((p.sessions || []).length) || ((p.templates || []).length)));
+}
+
+// Sceglie tra cloud e locale. Usata al login e dopo una riconnessione.
+async function _reconcileCloud(cloudResult, localParsed) {
+  var cloudTs = cloudResult && cloudResult.status === 'ok' ? new Date(cloudResult.last_updated || 0).getTime() : 0;
+  var localTs = localParsed ? new Date(localParsed.last_updated || 0).getTime() : 0;
+  var hasCloud = cloudResult && cloudResult.status === 'ok' && _stateHasData(cloudResult.state);
+  var hasLocal = _stateHasData(localParsed);
+
+  if (cloudResult && cloudResult.status === 'ok') setKnownCloudSessions(((cloudResult.state.sessions) || []).length);
+  else if (cloudResult && cloudResult.status === 'empty') setKnownCloudSessions(0);
+
+  if (hasCloud && hasLocal) {
+    if (localTs > cloudTs) {
+      // Local is NEWER — use it and push it up to fix the cloud
+      _applyState(localParsed);
+      showSyncIndicator('📱 Dati locali più recenti — upload in corso...');
+      await syncToCloud();
+    } else {
+      // Cloud is newer (o stesso timestamp): il cloud è la fonte canonica
+      _applyState(cloudResult.state);
+      _saveToLocal();
+      showSyncIndicator(cloudTs > localTs ? '☁️ Dati cloud aggiornati' : '☁️ Dati cloud sincronizzati');
+    }
+  } else if (hasCloud) {
+    // Only cloud has data
+    _applyState(cloudResult.state);
+    _saveToLocal();
+  } else if (hasLocal) {
+    // Only local has data — push it up
+    _applyState(localParsed);
+    await syncToCloud();
+  }
+  // else: neither has data — _initApp crea i default (solo se il cloud è leggibile)
+}
+
+function _scheduleCloudRetry() {
+  clearTimeout(_cloudRetryTimer);
+  _cloudRetryTimer = setTimeout(function(){
+    if (cloudBlocked && currentUser) retryCloudNow();
+  }, 15000);
+}
+
+// Rilegge il cloud dopo un errore. Se ora risponde, riconcilia e riprende il sync.
+async function retryCloudNow() {
+  if (!currentUser) return;
+  clearTimeout(_cloudRetryTimer);
+  showSyncIndicator('⏳ Riconnessione...');
+  var res = await loadFromCloud();
+  cloudReadStatus = res.status;
+  cloudReadError = res.error || '';
+  if (res.status === 'error') {
+    cloudBlocked = true;
+    showSyncIndicator('⚠️ Cloud non raggiunto');
+    updateCloudBanner();
+    _scheduleCloudRetry();
+    return;
+  }
+  cloudBlocked = false;
+  _uploadBlockedByGuard = false;
+  await _reconcileCloud(res, _readLocalState());
+  _initApp();               // idempotente: non ricrea i default se ci sono già
+  _subscribeRealtime();
+  updateCloudBanner();
+}
+
+function _retrySyncIfNeeded() {
+  if (!currentUser) return;
+  if (cloudBlocked) { retryCloudNow(); return; }
+  if (syncPending && !_uploadBlockedByGuard) syncToCloud();
+}
+
+window.addEventListener('online', _retrySyncIfNeeded);
+document.addEventListener('visibilitychange', function(){
+  if (document.visibilityState === 'visible') _retrySyncIfNeeded();
+});
 
 // Applies a state object (from cloud or local) into the running state
 function _applyState(p) {
@@ -1639,6 +1847,12 @@ async function authLogout() {
   if (_realtimeChannel) { supa.removeChannel(_realtimeChannel); _realtimeChannel = null; }
   await supa.auth.signOut();
   currentUser = null;
+  clearTimeout(_cloudRetryTimer);
+  _clearSyncPending();
+  cloudBlocked = false;
+  _uploadBlockedByGuard = false;
+  _forceUploadApproved = false;
+  updateCloudBanner();
   document.getElementById('auth-overlay').style.display = 'flex';
   document.getElementById('auth-email').value = '';
   document.getElementById('auth-password').value = '';
@@ -1665,14 +1879,18 @@ function _subscribeRealtime() {
       // Another device updated our row — reload state from the payload
       var p = payload.new.state;
       if (!p) return;
-      // Don't overwrite if we are the ones who just saved (debounce guard)
-      if (_syncDebounceTimer) return;
-      // Only apply if the incoming change is newer than what we have locally
+      // Ignora l'eco del nostro stesso upload e i dati più vecchi del locale.
+      // Prima qui c'era un guard su _syncDebounceTimer che, non tornando mai
+      // a null, spegneva il realtime dopo il primo salvataggio.
       var incomingTs = new Date(p.last_updated || 0).getTime();
       var currentTs  = new Date(state.last_updated || 0).getTime();
-      if (incomingTs < currentTs) return; // our local data is newer — ignore
+      if (incomingTs <= _lastUploadedTs) return;
+      if (incomingTs <= currentTs) return;
       _applyState(p);
       _saveToLocal();
+      setKnownCloudSessions((p.sessions || []).length);
+      _clearSyncPending();
+      updateCloudBanner();
       // Refresh current visible page
       var activePage = document.querySelector('.page.active');
       if (activePage) {
@@ -1690,58 +1908,36 @@ function _subscribeRealtime() {
 async function _onLogin(user) {
   currentUser = user;
   _authSetLoading(false);
+  _lastUploadedTs = 0;
+  _uploadBlockedByGuard = false;
+  _forceUploadApproved = false;
+  _clearSyncPending();
 
-  // Read both sources BEFORE applying either one
-  var cloudResult = await loadFromCloud();  // {state, last_updated} or null
-  var localRaw    = null;
-  var localParsed = null;
-  try {
-    localRaw    = localStorage.getItem('ironlog_v3');
-    localParsed = localRaw ? JSON.parse(localRaw) : null;
-  } catch(e) {}
+  // Read both sources BEFORE applying either one.
+  // Se la lettura fallisce non applichiamo nulla e non creiamo i default:
+  // altrimenti il sync successivo sovrascriverebbe il cloud con dati vuoti.
+  var cloudResult = await loadFromCloud();
+  var localParsed = _readLocalState();
 
-  var cloudTs = cloudResult  ? new Date(cloudResult.last_updated  || 0).getTime() : 0;
-  var localTs = localParsed  ? new Date(localParsed.last_updated  || 0).getTime() : 0;
+  cloudReadStatus = cloudResult.status;
+  cloudReadError  = cloudResult.error || '';
+  cloudBlocked    = (cloudResult.status === 'error');
 
-  var hasCloud = cloudResult && cloudResult.state &&
-    ((cloudResult.state.sessions  || []).length ||
-     (cloudResult.state.templates || []).length);
-  var hasLocal = localParsed &&
-    ((localParsed.sessions  || []).length ||
-     (localParsed.templates || []).length);
-
-  if (hasCloud && hasLocal) {
-    if (localTs > cloudTs) {
-      // Local is NEWER — use it and push it up to fix the cloud
-      _applyState(localParsed);
-      showSyncIndicator('📱 Dati locali più recenti — upload in corso...');
-      await syncToCloud();
-    } else if (cloudTs > localTs) {
-      // Cloud is NEWER — use it and update local cache
-      _applyState(cloudResult.state);
-      _saveToLocal();
-      showSyncIndicator('☁️ Dati cloud aggiornati');
-    } else {
-      // Same timestamp (or both zero) — trust cloud as canonical
-      _applyState(cloudResult.state);
-      _saveToLocal();
-    }
-  } else if (hasCloud) {
-    // Only cloud has data
-    _applyState(cloudResult.state);
-    _saveToLocal();
-  } else if (hasLocal) {
-    // Only local has data — push it up
-    _applyState(localParsed);
-    await syncToCloud();
+  if (cloudBlocked) {
+    if (localParsed) _applyState(localParsed);
+    _markSyncPending();
+    showSyncIndicator('⚠️ Cloud non raggiunto');
+    _scheduleCloudRetry();
+  } else {
+    await _reconcileCloud(cloudResult, localParsed);
   }
-  // else: neither has data — fresh start, nothing to do
 
   // Restore any in-progress session from localStorage regardless
   _restoreActiveSession();
   document.getElementById('auth-overlay').style.display = 'none';
   _initApp();
-  _subscribeRealtime();
+  if (!cloudBlocked) _subscribeRealtime();
+  updateCloudBanner();
 }
 
 function _authError(msg) {
@@ -1842,9 +2038,15 @@ function saveState() {
   // Always stamp the time of the last local change so _onLogin can compare
   state.last_updated = new Date().toISOString();
   _saveToLocal();
+  _markSyncPending();
   // Debounce cloud sync by 2s to avoid hammering on rapid changes
   clearTimeout(_syncDebounceTimer);
-  _syncDebounceTimer = setTimeout(function(){ syncToCloud(); }, 2000);
+  _syncDebounceTimer = setTimeout(function(){
+    // FIX: azzerare il timer PRIMA del sync. Prima restava valorizzato per
+    // sempre e il guard nel realtime ignorava ogni aggiornamento remoto.
+    _syncDebounceTimer = null;
+    syncToCloud();
+  }, 2000);
 }
 
 // ============================================================
@@ -1897,7 +2099,7 @@ function renderEsercizi() {
     if (!grouped[m] || !grouped[m].length) return;
     html += '<div style="padding:0 16px;margin:16px 0 6px">'+
       '<div style="font-size:11px;font-weight:700;color:'+(MUSCLE_COLORS[m]||'var(--accent)')+';text-transform:uppercase;letter-spacing:1px">'+
-        m+' <span style="color:var(--text3);font-weight:400">('+grouped[m].length+')</span>'+
+        escapeHtml(m)+' <span style="color:var(--text3);font-weight:400">('+grouped[m].length+')</span>'+
       '</div></div>';
     grouped[m].forEach(function(e){
       html += '<div class="history-item" style="margin:0 16px 8px;padding:12px 14px">'+
@@ -1905,9 +2107,9 @@ function renderEsercizi() {
           '<div class="flex items-center gap-8" style="min-width:0;flex:1">'+
             
             '<div style="min-width:0">'+
-              '<div class="font-bold" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e.name+'</div>'+
+              '<div class="font-bold" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escapeHtml(e.name)+'</div>'+
               '<div style="margin-top:4px">'+
-                '<span style="font-size:11px;color:var(--text2)">'+e.category+'</span>'+
+                '<span style="font-size:11px;color:var(--text2)">'+escapeHtml(e.category)+'</span>'+
               '</div>'+
             '</div>'+
           '</div>'+
@@ -1949,7 +2151,7 @@ function populateExProgSelect() {
   var sel = document.getElementById('ex-prog-select');
   var cur = sel.value;
   sel.innerHTML = '<option value="">Scegli un esercizio...</option>' +
-    ids.map(function(id){ var ex = findExercise(id); return ex ? '<option value="'+id+'"'+(id===cur?' selected':'')+'>'+ex.name+'</option>' : ''; }).join('');
+    ids.map(function(id){ var ex = findExercise(id); return ex ? '<option value="'+id+'"'+(id===cur?' selected':'')+'>'+escapeHtml(ex.name)+'</option>' : ''; }).join('');
   if (cur) renderExProgresso();
 }
 
@@ -2006,7 +2208,7 @@ function openEditExercise(id) {
   document.getElementById('generic-modal-content').innerHTML =
     '<div class="modal-title">Modifica esercizio</div>'+
     '<div class="input-group"><label class="input-label">Nome</label>'+
-    '<input class="input" id="edit-ex-name" value="'+e.name.replace(/"/g,'&quot;')+'" placeholder="Nome esercizio"></div>'+
+    '<input class="input" id="edit-ex-name" value="'+escapeHtml(e.name)+'" placeholder="Nome esercizio"></div>'+
     '<div class="input-group"><label class="input-label">Gruppo muscolare</label>'+
     '<select class="input" id="edit-ex-muscle">'+
       '<option value="">Seleziona...</option>'+
@@ -2026,9 +2228,9 @@ function openEditExercise(id) {
       '<option value="1"'+(getExerciseWeightedDefault(e.id)?' selected':'')+'>Sì — zavorre / palla pesante</option>'+
     '</select></div>'+
     '<div class="input-group"><label class="input-label">Icona (emoji)</label>'+
-    '<input class="input" id="edit-ex-icon" value="'+e.icon+'" placeholder="🏋️"></div>'+
+    '<input class="input" id="edit-ex-icon" value="'+escapeHtml(e.icon)+'" placeholder="🏋️"></div>'+
     '<div class="input-group"><label class="input-label">Note</label>'+
-    '<textarea class="input" id="edit-ex-notes" placeholder="Indicazioni tecniche, varianti...">'+( e.notes||'')+'</textarea></div>'+
+    '<textarea class="input" id="edit-ex-notes" placeholder="Indicazioni tecniche, varianti...">'+escapeHtml(e.notes||'')+'</textarea></div>'+
     '<div class="flex gap-8">'+
       '<button class="btn btn-secondary" style="flex:1" onclick="closeModal(\'modal-generic\')">Annulla</button>'+
       '<button class="btn btn-primary" style="flex:2" onclick="saveEditExercise()">Salva</button>'+
@@ -2086,8 +2288,8 @@ function openHiddenExercises() {
       return '<div class="flex items-center gap-8" style="padding:10px 0;border-bottom:1px solid var(--border)">'+
         
         '<div style="flex:1;min-width:0">'+
-          '<div class="font-bold" style="font-size:14px">'+e.name+'</div>'+
-          '<div style="font-size:11px;color:var(--text2)">'+e.muscle+' · '+e.category+'</div>'+
+          '<div class="font-bold" style="font-size:14px">'+escapeHtml(e.name)+'</div>'+
+          '<div style="font-size:11px;color:var(--text2)">'+escapeHtml(e.muscle)+' · '+escapeHtml(e.category)+'</div>'+
         '</div>'+
         '<button class="btn btn-xs btn-primary" onclick="showExercise(\''+e.id+'\')">Mostra</button>'+
       '</div>';
@@ -2133,7 +2335,7 @@ function restoreBuiltins() {
 function renderHome() {
   var h = new Date().getHours();
   document.getElementById('greeting-time').textContent = h<12?'BUONGIORNO':h<18?'BUON POMERIGGIO':'BUONASERA';
-  var name = (state.profile.name||'Atleta').toUpperCase();
+  var name = escapeHtml((state.profile.name||'Atleta').toUpperCase());
   document.getElementById('hero-name').innerHTML = name + ',<br><span style="color:var(--accent)">SI ALLENA!</span>';
   var total = state.sessions.length;
   var thisWeek = state.sessions.filter(function(s){return (Date.now()-new Date(s.date).getTime())<7*86400000;}).length;
@@ -2145,8 +2347,8 @@ function renderHome() {
     '<div class="stat-card"><div class="stat-value">'+state.templates.length+'</div><div class="stat-label">Template</div></div>';
   document.getElementById('home-templates').innerHTML = state.templates.slice(0,3).map(function(t,i){
     return '<div class="workout-card" onclick="startSessionFromTemplate('+i+')">'+
-      '<div class="workout-card-accent" style="background:'+(t.color||'#e8ff47')+'"></div>'+
-      '<div class="workout-card-body"><div class="workout-card-name">'+t.name+'</div>'+
+      '<div class="workout-card-accent" style="background:'+escapeHtml(t.color||'#e8ff47')+'"></div>'+
+      '<div class="workout-card-body"><div class="workout-card-name">'+escapeHtml(t.name)+'</div>'+
       '<div class="workout-card-meta"><span class="workout-card-tag">'+t.exercises.length+' esercizi</span><span class="workout-card-tag">Inizia subito</span></div></div></div>';
   }).join('') || '<div style="padding:0 16px;color:var(--text3);font-size:14px">Nessun template ancora. Creane uno!</div>';
   if (state.sessions.length>0) {
@@ -2154,7 +2356,7 @@ function renderHome() {
     var date = new Date(last.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
     document.getElementById('home-last-session').innerHTML =
       '<div class="history-item" style="margin-top:0" onclick="showSessionDetail('+(state.sessions.length-1)+')">'+
-      '<div class="history-date">'+date+'</div><div class="history-name">'+last.name+'</div>'+
+      '<div class="history-date">'+date+'</div><div class="history-name">'+escapeHtml(last.name)+'</div>'+
       '<div class="history-stats">'+
       '<div><div class="hs-val">'+(last.exercises?last.exercises.length:0)+'</div><div class="hs-lbl">esercizi</div></div>'+
       '<div><div class="hs-val">'+(last.totalSets||0)+'</div><div class="hs-lbl">serie</div></div>'+
@@ -2178,12 +2380,12 @@ function renderTemplates() {
   document.getElementById('template-list').innerHTML = state.templates.map(function(t,i){
     var exLines = t.exercises.map(function(e){
       var ex=findExercise(e.exerciseId);
-      return ex ? ex.name+' — '+cfgSummary(e) : '';
+      return ex ? escapeHtml(ex.name)+' — '+cfgSummary(e) : '';
     }).join('<br>');
     return '<div class="template-card">'+
-      '<div class="template-card-stripe" style="background:'+(t.color||'#e8ff47')+'"></div>'+
+      '<div class="template-card-stripe" style="background:'+escapeHtml(t.color||'#e8ff47')+'"></div>'+
       '<div class="flex justify-between items-center mb-8">'+
-      '<div class="font-bold" style="font-size:17px">'+t.name+'</div>'+
+      '<div class="font-bold" style="font-size:17px">'+escapeHtml(t.name)+'</div>'+
       '<div class="flex gap-8">'+
       '<button class="btn btn-xs btn-secondary" onclick="editTemplate('+i+')">Modifica</button>'+
       '<button class="btn btn-xs btn-danger" onclick="deleteTemplate('+i+')">Elimina</button></div></div>'+
@@ -2230,7 +2432,7 @@ function renderTplExerciseList() {
     var ex=findExercise(e.exerciseId); if(!ex)return'';
     var incFlag = hasInc(e.increments);
     return '<div class="flex items-center gap-8" style="margin-bottom:10px">'+
-      '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+ex.name+'</div>'+
+      '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+escapeHtml(ex.name)+'</div>'+
       '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+cfgSummary(e)+(e.rpe?' RPE '+e.rpe:'')+(incFlag?' +prog':'')+'</div></div>'+
       '<button class="btn btn-xs btn-secondary" onclick="configureTemplateExercise('+i+')">Config</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeTemplateExercise('+i+')">X</button></div>';
@@ -2302,10 +2504,10 @@ function renderExercisePickerList() {
   var grouped = {};
   list.forEach(function(e){if(!grouped[e.muscle])grouped[e.muscle]=[];grouped[e.muscle].push(e);});
   document.getElementById('exercise-picker-list').innerHTML = Object.keys(grouped).map(function(muscle){
-    return '<div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">'+muscle+'</div>'+
+    return '<div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">'+escapeHtml(muscle)+'</div>'+
       grouped[muscle].map(function(e){
         return '<div class="ex-picker-item" onclick="selectExercise(\''+e.id+'\')">'+
-          '<div><div class="ex-picker-name">'+e.name+'</div><div class="ex-picker-cat">'+e.category+'</div></div>'+
+          '<div><div class="ex-picker-name">'+escapeHtml(e.name)+'</div><div class="ex-picker-cat">'+escapeHtml(e.category)+'</div></div>'+
           '<div style="color:var(--accent);font-size:20px">+</div></div>';
       }).join('');
   }).join('') || '<div style="color:var(--text3);text-align:center;padding:30px">Nessun esercizio trovato</div>';
@@ -2686,8 +2888,8 @@ function renderAllenamento() {
     document.getElementById('active-session').style.display='none';
     document.getElementById('session-template-list').innerHTML = state.templates.map(function(t,i){
       return '<div class="workout-card" onclick="startSessionFromTemplate('+i+')">'+
-        '<div class="workout-card-accent" style="background:'+(t.color||'#e8ff47')+'"></div>'+
-        '<div class="workout-card-body"><div class="workout-card-name">'+t.name+'</div>'+
+        '<div class="workout-card-accent" style="background:'+escapeHtml(t.color||'#e8ff47')+'"></div>'+
+        '<div class="workout-card-body"><div class="workout-card-name">'+escapeHtml(t.name)+'</div>'+
         '<div class="workout-card-meta"><span class="workout-card-tag">'+t.exercises.length+' esercizi</span></div></div></div>';
     }).join('') || '<div class="empty-state" style="padding:40px 30px"><div class="empty-icon">📋</div><div class="empty-title">Nessun template</div><div class="empty-desc">Crea un template o inizia libero</div></div>';
   }
@@ -2884,8 +3086,8 @@ function renderSessionExercises() {
     var restLabel = restMin + ':' + (restRemS<10?'0':'') + restRemS;
     return '<div class="exercise-section">'+
       '<div class="exercise-header">'+
-      '<div><div class="exercise-name-s">'+(ex.ex?ex.ex.name:'Esercizio')+'</div>'+
-      '<div class="exercise-muscle-s">'+(ex.ex?ex.ex.muscle:'')+'</div></div>'+
+      '<div><div class="exercise-name-s">'+escapeHtml(ex.ex?ex.ex.name:'Esercizio')+'</div>'+
+      '<div class="exercise-muscle-s">'+escapeHtml(ex.ex?ex.ex.muscle:'')+'</div></div>'+
       '<div class="flex gap-8" style="align-items:center">'+
       '<div style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:3px 6px" title="Recupero">'+
         '<span style="font-size:10px;color:var(--text3)">⏱</span>'+
@@ -2908,7 +3110,7 @@ function renderSessionExercises() {
         var unit = isCarry ? 'm' : isCardio ? ' min' : '';
         var label = isCarry ? 'distanza: ' : isCardio ? 'durata: ' : 'rip: ';
         var progStr = '<span style="color:var(--accent);font-weight:700">'+progression.join('→')+unit+'</span>';
-        var noteTxt = ex.config.notes ? '<span>'+ex.config.notes+'</span> · ' : '';
+        var noteTxt = ex.config.notes ? '<span>'+escapeHtml(ex.config.notes)+'</span> · ' : '';
         return '<div class="ex-note-bar">'+noteTxt+label+progStr+'</div>';
       })()+
       '</div>';
@@ -3459,7 +3661,7 @@ function renderStorico() {
     var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
     var retroBadge = s.retro ? '<span style="background:rgba(30,144,255,0.2);color:#1e90ff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;border:1px solid rgba(30,144,255,0.4);margin-left:8px">RETRO</span>' : '';
     return '<div class="history-item" onclick="showSessionDetail('+idx+')">'+
-      '<div class="history-date">'+date+retroBadge+'</div><div class="history-name">'+s.name+'</div>'+
+      '<div class="history-date">'+date+retroBadge+'</div><div class="history-name">'+escapeHtml(s.name)+'</div>'+
       '<div class="history-stats">'+
       '<div><div class="hs-val">'+(s.exercises?s.exercises.length:0)+'</div><div class="hs-lbl">esercizi</div></div>'+
       '<div><div class="hs-val">'+(s.totalSets||0)+'</div><div class="hs-lbl">serie</div></div>'+
@@ -3517,7 +3719,7 @@ function showSessionDetail(idx) {
     return null;
   }
   document.getElementById('session-detail-content').innerHTML =
-    '<div class="modal-title">'+s.name+'</div>'+
+    '<div class="modal-title">'+escapeHtml(s.name)+'</div>'+
     '<div style="font-size:13px;color:var(--accent);margin-bottom:16px">'+date+'</div>'+
     '<div class="flex gap-8 mb-12" style="margin-bottom:12px">'+
     '<div class="stat-box"><div class="stat-box-val">'+fmtDuration(s.duration||0)+'</div><div class="stat-box-lbl">Durata</div></div>'+
@@ -3539,7 +3741,7 @@ function showSessionDetail(idx) {
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
       return '<div style="margin-bottom:16px">'+
-        '<div class="font-bold" style="margin-bottom:4px">'+ex.name+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
+        '<div class="font-bold" style="margin-bottom:4px">'+escapeHtml(ex.name)+(e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
         (e.sets||[]).map(function(set,i){
           if (isCarry) {
             var cw = set.weight ? set.weight+'kg × ' : '';
@@ -3551,7 +3753,7 @@ function showSessionDetail(idx) {
           var load = set.weight ? set.weight+'kg × ' : '';
           return '<div style="font-size:13px;color:var(--text2);padding:2px 0">Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'')+'</div>';
         }).join('')+
-        (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 '+e.notes+'</div>':'')+
+        (e.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 '+escapeHtml(e.notes)+'</div>':'')+
         incHtml+
         '</div>';
     }).join('')+
@@ -3567,6 +3769,9 @@ function deleteSession(idx) {
 function confirmDeleteSession() {
   closeModal('modal-confirm-delete');
   if (deleteSessionIdx === null) return;
+  // Eliminazione volontaria: sblocca la guardia anti-perdita per questo upload.
+  _forceUploadApproved = true;
+  _uploadBlockedByGuard = false;
   state.sessions.splice(deleteSessionIdx,1);
   deleteSessionIdx = null;
   saveState();
@@ -3578,7 +3783,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.3.12';
+var APP_VERSION = '4.4.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3646,11 +3851,27 @@ function renderProfilo() {
   sel.innerHTML='<option value="">Scegli un esercizio...</option>'+
     Object.keys(prs).map(function(id){
       var ex=findExercise(id);if(!ex)return'';
-      return '<option value="'+id+'">'+ex.name+' ('+ex.muscle+')</option>';
+      return '<option value="'+id+'">'+escapeHtml(ex.name)+' ('+escapeHtml(ex.muscle)+')</option>';
     }).join('');
   // Restore previous selection if still valid
   if(prev && prs[prev]) sel.value=prev;
   renderPRDetail();
+
+  // Backup: ultimo export e snapshot pre-import
+  var info = document.getElementById('last-export-info');
+  if (info) {
+    var lastExp = _lastExportMs();
+    if (!lastExp) {
+      info.textContent = 'Nessun backup esportato da questo dispositivo.';
+      info.style.color = 'var(--text3)';
+    } else {
+      var days = Math.floor((Date.now() - lastExp) / 86400000);
+      info.textContent = days <= 0 ? 'Ultimo backup: oggi.' : 'Ultimo backup: ' + days + (days === 1 ? ' giorno fa.' : ' giorni fa.');
+      info.style.color = days >= 7 ? 'var(--red)' : 'var(--text3)';
+    }
+  }
+  var snapBtn = document.getElementById('restore-snapshot-btn');
+  if (snapBtn) snapBtn.style.display = hasPreImportSnapshot() ? '' : 'none';
 }
 
 function renderPRDetail() {
@@ -3662,8 +3883,8 @@ function renderPRDetail() {
   if(!pr||!ex){el.innerHTML='';return;}
   el.innerHTML=
     '<div class="flex justify-between items-center" style="padding:12px 0">'+
-      '<div><div class="font-bold" style="font-size:16px">'+ex.name+'</div>'+
-      '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+ex.muscle+'</div></div>'+
+      '<div><div class="font-bold" style="font-size:16px">'+escapeHtml(ex.name)+'</div>'+
+      '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+escapeHtml(ex.muscle)+'</div></div>'+
       '<div style="text-align:right">'+
         '<div style="font-size:32px;font-weight:900;color:var(--accent);line-height:1">'+pr.weight+'kg</div>'+
         '<div style="font-size:12px;color:var(--text2);margin-top:4px">'+pr.reps+' rip · 1RM ~'+pr.est1rm.toFixed(1)+'kg</div>'+
@@ -3701,6 +3922,24 @@ function saveProfile() {
   renderHome();
 }
 
+function _lastExportMs() {
+  try { return parseInt(localStorage.getItem('ironlog_last_export') || '0', 10) || 0; } catch(e) { return 0; }
+}
+
+function checkBackupReminder() {
+  if (!currentUser || !state.sessions.length) return;
+  var last = _lastExportMs();
+  if (last && Date.now() - last < 7*86400000) return;
+  var today = new Date().toISOString().slice(0,10);
+  try {
+    if (localStorage.getItem('ironlog_backup_nag') === today) return;
+    localStorage.setItem('ironlog_backup_nag', today);
+  } catch(e) {}
+  setTimeout(function(){
+    showToast(last ? 'Backup: sono passati più di 7 giorni. Esporta i dati dal Profilo.' : 'Nessun backup esportato: fai una copia dal Profilo.');
+  }, 1800);
+}
+
 function exportData() {
   var json = JSON.stringify(state, null, 2);
   var blob = new Blob([json], {type: 'application/json'});
@@ -3713,30 +3952,210 @@ function exportData() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  try { localStorage.setItem('ironlog_last_export', String(Date.now())); } catch(e) {}
   showToast('Backup esportato ✅');
+  if (document.getElementById('page-profilo').classList.contains('active')) renderProfilo();
+}
+
+// Copia dei soli dati persistenti (senza sessione attiva / timer).
+function _persistentStateSnapshot() {
+  return {
+    templates: state.templates || [], sessions: state.sessions || [],
+    customExercises: state.customExercises || [],
+    deletedBuiltins: state.deletedBuiltins || [],
+    hiddenExercises: state.hiddenExercises || [],
+    builtinOverrides: state.builtinOverrides || {},
+    profile: state.profile || {name:'Atleta', unit:'kg'},
+    misurazioni: state.misurazioni || [],
+    last_updated: state.last_updated || new Date().toISOString()
+  };
+}
+
+function savePreImportSnapshot() {
+  try {
+    localStorage.setItem('ironlog_snapshot_pre_import', JSON.stringify({
+      savedAt: new Date().toISOString(),
+      state: _persistentStateSnapshot()
+    }));
+    return true;
+  } catch(e) { return false; }
+}
+
+function hasPreImportSnapshot() {
+  try { return !!localStorage.getItem('ironlog_snapshot_pre_import'); } catch(e) { return false; }
+}
+
+function restorePreImportSnapshot() {
+  var raw = null;
+  try { raw = localStorage.getItem('ironlog_snapshot_pre_import'); } catch(e) {}
+  if (!raw) { showToast('Nessuno snapshot disponibile'); return; }
+  var snap, p;
+  try {
+    snap = JSON.parse(raw);
+    p = snap.state || snap;
+  } catch(e) { showToast('Snapshot non leggibile ❌'); return; }
+  var err = validateImportState(p);
+  if (err) { showToast(err); return; }
+  var when = snap.savedAt ? new Date(snap.savedAt).toLocaleString('it-IT') : 'data sconosciuta';
+  if (!confirm('Ripristinare i dati salvati prima dell\'ultimo import (' + when + ')?\n\nI dati attuali verranno sostituiti.')) return;
+  _forceUploadApproved = true;
+  state.activeSession = null;
+  if (typeof releaseWakeLock === 'function') releaseWakeLock();
+  _applyState(p);
+  saveState();
+  renderHome();
+  renderProfilo();
+  showToast('Snapshot ripristinato ✅');
+}
+
+// Validazione dell'import: tipi, id sicuri (finiscono in attributi onclick)
+// e valori numerici. Un backup malformato non deve arrivare a _applyState.
+function _validImportId(v) {
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(v);
+}
+function _validImportNum(v) {
+  return v == null || v === '' || (typeof v === 'number' && isFinite(v));
+}
+function _validImportInc(v) {
+  return !v || (typeof v === 'object' &&
+    _validImportNum(v.weight) && _validImportNum(v.sets) &&
+    _validImportNum(v.reps) && _validImportNum(v.distance));
+}
+
+function validateImportState(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return 'Il file non contiene un backup valido.';
+  if (!Array.isArray(p.sessions)) return 'Backup non valido: manca l\'elenco delle sessioni.';
+  if (!Array.isArray(p.templates)) return 'Backup non valido: manca l\'elenco dei template.';
+  if (p.sessions.length > 20000) return 'Backup troppo grande: troppe sessioni.';
+  if (p.templates.length > 1000) return 'Backup troppo grande: troppi template.';
+  if (p.misurazioni != null && !Array.isArray(p.misurazioni)) return 'Backup non valido: misurazioni.';
+  if (p.customExercises != null && !Array.isArray(p.customExercises)) return 'Backup non valido: esercizi personalizzati.';
+  if (p.deletedBuiltins != null && !Array.isArray(p.deletedBuiltins)) return 'Backup non valido: esercizi eliminati.';
+  if (p.hiddenExercises != null && !Array.isArray(p.hiddenExercises)) return 'Backup non valido: esercizi nascosti.';
+  if (p.profile != null && (typeof p.profile !== 'object' || Array.isArray(p.profile))) return 'Backup non valido: profilo.';
+
+  for (var si=0; si<p.sessions.length; si++) {
+    var s = p.sessions[si];
+    if (!s || typeof s !== 'object') return 'Sessione ' + (si+1) + ' non valida.';
+    if (s.date != null && isNaN(new Date(s.date).getTime())) return 'Sessione ' + (si+1) + ': data non valida.';
+    if (!_validImportNum(s.duration) || !_validImportNum(s.totalVolume) || !_validImportNum(s.totalSets)) {
+      return 'Sessione ' + (si+1) + ': valori numerici non validi.';
+    }
+    if (s.exercises != null && !Array.isArray(s.exercises)) return 'Sessione ' + (si+1) + ': esercizi non validi.';
+    var exs = s.exercises || [];
+    for (var ei=0; ei<exs.length; ei++) {
+      var e = exs[ei];
+      if (!e || typeof e !== 'object') return 'Sessione ' + (si+1) + ', esercizio ' + (ei+1) + ' non valido.';
+      if (!_validImportId(e.exerciseId)) return 'Sessione ' + (si+1) + ', esercizio ' + (ei+1) + ': id non valido.';
+      if (!_validImportInc(e.increments)) return 'Sessione ' + (si+1) + ', esercizio ' + (ei+1) + ': progressione non valida.';
+      if (e.sets != null && !Array.isArray(e.sets)) return 'Sessione ' + (si+1) + ': serie non valide.';
+      var sets = e.sets || [];
+      for (var ti=0; ti<sets.length; ti++) {
+        var st = sets[ti];
+        if (!st || typeof st !== 'object') return 'Sessione ' + (si+1) + ', serie ' + (ti+1) + ' non valida.';
+        if (!_validImportNum(st.weight) || !_validImportNum(st.reps) ||
+            !_validImportNum(st.distance) || !_validImportNum(st.duration)) {
+          return 'Sessione ' + (si+1) + ', serie ' + (ti+1) + ': valori non validi.';
+        }
+        if (st.rpe != null && st.rpe !== '' && !_validImportNum(parseFloat(st.rpe))) {
+          return 'Sessione ' + (si+1) + ', serie ' + (ti+1) + ': RPE non valido.';
+        }
+      }
+    }
+  }
+
+  for (var tpl=0; tpl<p.templates.length; tpl++) {
+    var t = p.templates[tpl];
+    if (!t || typeof t !== 'object' || typeof t.name !== 'string' || !t.name.trim()) {
+      return 'Template ' + (tpl+1) + ' non valido.';
+    }
+    if (t.color != null && !/^#[0-9a-fA-F]{6}$/.test(String(t.color))) {
+      return 'Template ' + (tpl+1) + ': colore non valido.';
+    }
+    if (t.exercises != null && !Array.isArray(t.exercises)) return 'Template ' + (tpl+1) + ': esercizi non validi.';
+    var tex = t.exercises || [];
+    for (var xi=0; xi<tex.length; xi++) {
+      var c = tex[xi];
+      if (!c || typeof c !== 'object' || !_validImportId(c.exerciseId)) {
+        return 'Template ' + (tpl+1) + ', esercizio ' + (xi+1) + ' non valido.';
+      }
+      if (!_validImportInc(c.increments)) {
+        return 'Template ' + (tpl+1) + ', esercizio ' + (xi+1) + ': progressione non valida.';
+      }
+      var keys = ['sets','reps','weight','distance','duration','rest','warmup'];
+      for (var ki=0; ki<keys.length; ki++) {
+        if (!_validImportNum(c[keys[ki]])) {
+          return 'Template ' + (tpl+1) + ', esercizio ' + (xi+1) + ': valori non validi.';
+        }
+      }
+    }
+  }
+
+  var cx = p.customExercises || [];
+  for (var ci=0; ci<cx.length; ci++) {
+    var ce = cx[ci];
+    if (!ce || typeof ce !== 'object' || !_validImportId(ce.id) ||
+        typeof ce.name !== 'string' || typeof ce.muscle !== 'string') {
+      return 'Esercizio personalizzato ' + (ci+1) + ' non valido.';
+    }
+  }
+
+  var mis = p.misurazioni || [];
+  var misKeys = ['weight','chest','abdomen','rightBicep','leftBicep','rightQuad','leftQuad'];
+  for (var mi=0; mi<mis.length; mi++) {
+    var m = mis[mi];
+    if (!m || typeof m !== 'object') return 'Misurazione ' + (mi+1) + ' non valida.';
+    if (m.id != null && !_validImportId(m.id)) return 'Misurazione ' + (mi+1) + ': id non valido.';
+    for (var mk=0; mk<misKeys.length; mk++) {
+      if (!_validImportNum(m[misKeys[mk]])) return 'Misurazione ' + (mi+1) + ': valori non validi.';
+    }
+  }
+  return null;
 }
 
 function importData(event) {
   var file = event.target.files[0];
+  event.target.value = '';
   if (!file) return;
+  if (file.size > 15 * 1024 * 1024) { showToast('File troppo grande (max 15 MB)'); return; }
   var reader = new FileReader();
   reader.onload = function(e) {
+    var imported;
     try {
-      var imported = JSON.parse(e.target.result);
-      if (!imported.sessions || !imported.templates) {
-        showToast('File non valido ❌'); return;
-      }
-      if (!confirm('Importando sovrascriverai tutti i dati attuali. Continuare?')) return;
-      state = imported;
-      saveState();
-      renderHome();
-      showToast('Dati importati ✅');
+      imported = JSON.parse(e.target.result);
     } catch(err) {
       showToast('Errore nel file JSON ❌');
+      return;
     }
+    var invalid = validateImportState(imported);
+    if (invalid) { showToast(invalid); return; }
+
+    var nSess = imported.sessions.length;
+    var nTpl  = imported.templates.length;
+    var nMis  = (imported.misurazioni || []).length;
+    var latest = imported.sessions.reduce(function(max, s){
+      var t = new Date(s.date).getTime();
+      return isFinite(t) && t > max ? t : max;
+    }, 0);
+    var msg = 'Backup: ' + nSess + ' sessioni, ' + nTpl + ' template, ' + nMis + ' misurazioni.';
+    if (latest) msg += '\nSessione più recente: ' + new Date(latest).toLocaleDateString('it-IT') + '.';
+    if (state.activeSession) msg += '\n\nLa sessione in corso verrà chiusa senza salvarla.';
+    msg += '\n\nI dati attuali del dispositivo verranno sostituiti. Continuare?';
+    if (!confirm(msg)) return;
+
+    if (!savePreImportSnapshot()) {
+      if (!confirm('Impossibile salvare lo snapshot locale. Continuare comunque senza rete di sicurezza?')) return;
+    }
+    _forceUploadApproved = true;    // l'utente ha confermato esplicitamente
+    state.activeSession = null;
+    if (typeof releaseWakeLock === 'function') releaseWakeLock();
+    _applyState(imported);          // non state = imported: completa i campi mancanti
+    saveState();
+    renderHome();
+    renderProfilo();
+    showToast('Dati importati ✅');
   };
   reader.readAsText(file);
-  event.target.value = '';
 }
 
 // ============================================================
@@ -3761,6 +4180,17 @@ function showToast(msg){
 // ============================================================
 function fmtTime(sec){var m=Math.floor(sec/60),s=sec%60;return(m<10?'0':'')+m+':'+(s<10?'0':'')+s;}
 function fmtDuration(sec){if(!sec)return'0min';var m=Math.floor(sec/60);if(m<60)return m+'min';return Math.floor(m/60)+'h '+(m%60)+'min';}
+
+// Escape per i testi che finiscono in innerHTML (nomi, note, campi importati).
+// Non basta per gli attributi onclick: gli id importati vengono validati.
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // ============================================================
 // RETROACTIVE SESSION
@@ -3963,7 +4393,7 @@ function renderRetroExerciseList() {
           '<button class="btn btn-xs btn-ghost" style="padding:1px 5px;font-size:14px;line-height:1" onclick="moveRetroExercise('+idx+',-1)" '+(idx===0?'disabled':'')+'>▲</button>'+
           '<button class="btn btn-xs btn-ghost" style="padding:1px 5px;font-size:14px;line-height:1" onclick="moveRetroExercise('+idx+',1)" '+(idx===retroExercises.length-1?'disabled':'')+'>▼</button>'+
         '</div>'+
-        '<div class="font-bold" style="font-size:14px;flex:1">'+name+'</div>'+
+        '<div class="font-bold" style="font-size:14px;flex:1">'+escapeHtml(name)+'</div>'+
         '<div class="flex gap-8">'+
           '<button class="btn btn-xs btn-secondary" onclick="addRetroSet('+idx+')">+ Serie</button>'+
           '<button class="btn btn-xs btn-danger" onclick="removeRetroExercise('+idx+')">Rimuovi</button>'+
@@ -4048,7 +4478,7 @@ function filterRetroExercises() {
   });
   document.getElementById('retro-exercise-picker-list').innerHTML = list.map(function(e){
     return '<div class="ex-picker-item" onclick="pickRetroExercise(\''+e.id+'\')">'+
-      '<div><div class="ex-picker-name">'+e.name+'</div><div class="ex-picker-cat">'+e.muscle+' · '+e.category+'</div></div>'+
+      '<div><div class="ex-picker-name">'+escapeHtml(e.name)+'</div><div class="ex-picker-cat">'+escapeHtml(e.muscle)+' · '+escapeHtml(e.category)+'</div></div>'+
       '<span style="color:var(--accent);font-size:18px">+</span></div>';
   }).join('') || '<div style="color:var(--text3);font-size:13px;padding:12px 0">Nessun risultato</div>';
 }
@@ -4295,7 +4725,10 @@ function importDefaultProgram() {
 // ============================================================
 function _initApp() {
   resumeSessionTimerIfActive();
-  if (!state.templates.length) {
+  // I template di default si creano SOLO quando il cloud è stato letto
+  // (ok oppure empty confermato). Con un errore di lettura non tocchiamo
+  // nulla: il prossimo sync potrebbe sovrascrivere dati esistenti.
+  if (!state.templates.length && !cloudBlocked) {
     state.templates = defaultProgramTemplates();
     saveState();
   }
@@ -4305,6 +4738,7 @@ function _initApp() {
   } else {
     renderHome();
   }
+  checkBackupReminder();
 }
 
 // Wire up auth buttons as soon as DOM is ready
@@ -4677,6 +5111,11 @@ function renderMisurazioni(){ renderMisChart(); renderMisList(); }
   });
 })();
 </script>
+
+<div id="cloud-banner" style="
+  position:fixed;top:0;left:0;right:0;z-index:10050;
+  display:none;pointer-events:auto;
+"></div>
 
 <div id="sync-indicator" style="
   position:fixed;top:12px;right:12px;z-index:1000;
