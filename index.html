@@ -321,7 +321,12 @@ select.input{appearance:none}
   </div>
   <div class="card">
     <div class="card-title">☁️ Account & Sync</div>
-    <div id="profilo-account-info" style="font-size:13px;color:var(--text2);margin-bottom:14px"></div>
+    <div id="profilo-account-info" style="font-size:13px;color:var(--text2);margin-bottom:8px"></div>
+    <div id="profilo-sync-version" style="font-size:12px;color:var(--text3);margin-bottom:14px"></div>
+    <div id="profilo-db-warning" style="display:none;font-size:12px;color:var(--text2);background:rgba(255,159,67,0.12);border:1px solid rgba(255,159,67,0.4);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px">
+      <b style="color:var(--text)">Aggiornamento database richiesto</b><br>
+      La colonna <code>version</code> non è presente: il controllo dei conflitti resta disattivato. Esegui l'SQL del Blocco B su Supabase e riapri l'app.
+    </div>
     <button class="btn btn-ghost btn-full" onclick="authLogout()" style="color:#ff4757;border-color:#ff4757;margin-bottom:0">Esci dall'account</button>
   </div>
   <div class="card">
@@ -831,6 +836,19 @@ select.input{appearance:none}
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-confirm-delete')">Annulla</button>
       <button class="btn btn-danger" style="flex:1" onclick="confirmDeleteSession()">Elimina</button>
     </div>
+  </div>
+</div>
+
+<!-- MODAL: Conflitto di sincronizzazione (Blocco B) -->
+<div class="modal-overlay" id="modal-sync-conflict">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div style="font-size:40px;text-align:center;margin-bottom:8px">⚠️</div>
+    <div class="modal-title" style="text-align:center">Conflitto di sincronizzazione</div>
+    <div id="sync-conflict-info"></div>
+    <button class="btn btn-primary btn-full" style="margin-bottom:10px" onclick="resolveSyncConflict('cloud')">Usa i dati del cloud</button>
+    <button class="btn btn-secondary btn-full" style="margin-bottom:10px" onclick="resolveSyncConflict('local')">Mantieni questo dispositivo</button>
+    <button class="btn btn-ghost btn-full" onclick="resolveSyncConflict('later')">Decidi più tardi</button>
   </div>
 </div>
 
@@ -1518,6 +1536,72 @@ var _forceUploadApproved = false;
 var _pendingSince = 0;                // quando è iniziata l'attesa di sync
 var _bannerTimer = null;
 
+// --- Versioning del documento cloud (Blocco B) -----------------------------
+// La version e' l'unico criterio per capire chi ha scritto per ultimo.
+// Timestamp e last_updated restano solo informativi.
+var _cloudVersion = null;             // ultima version letta o scritta
+var _cloudRowExists = false;          // esiste gia' una riga su user_data?
+var _localDirty = false;              // ci sono modifiche locali non caricate
+var _lastUploadedVersion = 0;         // per ignorare l'eco realtime
+var _versioningAvailable = true;      // false finche' la colonna non esiste
+var _versionConflict = null;          // {cloudState, cloudVersion, cloudSessions, reason}
+var _syncedVersion = null;            // version a cui questo dispositivo è allineato
+
+try {
+  var _cvRaw = localStorage.getItem('ironlog_cloud_version');
+  if (_cvRaw !== null && isFinite(parseInt(_cvRaw,10))) _cloudVersion = parseInt(_cvRaw,10);
+  var _svRaw = localStorage.getItem('ironlog_synced_version');
+  if (_svRaw !== null && isFinite(parseInt(_svRaw,10))) _syncedVersion = parseInt(_svRaw,10);
+  _cloudRowExists = localStorage.getItem('ironlog_cloud_row') === '1';
+  _localDirty = localStorage.getItem('ironlog_local_dirty') === '1';
+} catch(e) {}
+
+function _writeStoredVersion(v) {
+  try {
+    if (v === null || v === undefined || !isFinite(parseInt(v,10))) localStorage.removeItem('ironlog_cloud_version');
+    else localStorage.setItem('ironlog_cloud_version', String(parseInt(v,10)));
+  } catch(e) {}
+}
+// Versione alla quale il dispositivo è allineato: cambia solo dopo una
+// lettura applicata o un upload riuscito, non quando si legge il cloud.
+function _readStoredVersion() {
+  try {
+    var v = localStorage.getItem('ironlog_synced_version');
+    if (v === null) return null;
+    var n = parseInt(v,10);
+    return isFinite(n) ? n : null;
+  } catch(e) { return null; }
+}
+function _setSyncedVersion(v) {
+  _syncedVersion = (v === null || v === undefined || !isFinite(parseInt(v,10))) ? null : parseInt(v,10);
+  try {
+    if (_syncedVersion === null) localStorage.removeItem('ironlog_synced_version');
+    else localStorage.setItem('ironlog_synced_version', String(_syncedVersion));
+  } catch(e) {}
+}
+function _setLocalDirty(on) {
+  _localDirty = !!on;
+  try {
+    if (_localDirty) localStorage.setItem('ironlog_local_dirty', '1');
+    else localStorage.removeItem('ironlog_local_dirty');
+  } catch(e) {}
+}
+// Registra la version allineata tra locale e cloud.
+function _stampCloudVersion(v, exists) {
+  _cloudVersion = (v === null || v === undefined || !isFinite(parseInt(v,10))) ? null : parseInt(v,10);
+  _cloudRowExists = !!exists;
+  _writeStoredVersion(_cloudVersion);
+  try { localStorage.setItem('ironlog_cloud_row', _cloudRowExists ? '1' : '0'); } catch(e) {}
+}
+
+// Applica i dati del cloud e allinea i marcatori di versione.
+function _applyCloudState(p, version) {
+  _applyState(p || {});
+  _setLocalDirty(false);
+  if (version !== undefined && version !== null) _setSyncedVersion(version);
+  _saveToLocal();
+}
+
 // Segna "modifiche in coda" senza far lampeggiare il banner a ogni salvataggio:
 // il banner compare solo se l'attesa supera qualche secondo.
 function _markSyncPending() {
@@ -1553,32 +1637,44 @@ function showSyncIndicator(text) {
   if (text.startsWith('✅')) el._hide = setTimeout(function(){ el.style.display='none'; }, 2000);
 }
 
-// Banner persistente: cloud non letto, modifiche in coda o upload bloccato.
+// Banner persistente: conflitto, cloud non letto, modifiche in coda o upload bloccato.
 function updateCloudBanner() {
   var el = document.getElementById('cloud-banner');
   if (!el) return;
   var showPending = syncPending && _pendingSince && (Date.now() - _pendingSince > 5000);
-  if (!currentUser || (!cloudBlocked && !_uploadBlockedByGuard && !showPending)) {
+  if (!currentUser || (!_versionConflict && !cloudBlocked && !_uploadBlockedByGuard && !showPending)) {
     el.style.display = 'none';
     el.innerHTML = '';
     return;
   }
-  var title, body;
-  if (cloudBlocked) {
+  var title, body, label;
+  if (_versionConflict) {
+    title = '⚠️ Conflitto di sincronizzazione';
+    body = 'Un altro dispositivo ha salvato dati più recenti. Scegli quale versione tenere prima di continuare.';
+    label = 'Risolvi';
+  } else if (cloudBlocked) {
     title = '☁️ Cloud non raggiunto';
     body = 'Sincronizzazione sospesa: i dati locali restano intatti. Riprova quando la connessione torna disponibile.';
+    label = 'Riprova';
   } else if (_uploadBlockedByGuard) {
     title = '⚠️ Upload bloccato';
     body = 'Il cloud contiene più sessioni di questo dispositivo. Controlla i dati prima di sovrascrivere.';
+    label = 'Controlla';
   } else {
     title = '⏳ Modifiche non sincronizzate';
     body = 'Verranno inviate appena la connessione torna disponibile.';
+    label = 'Riprova';
   }
   el.style.display = 'block';
   el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,159,67,0.14);border-bottom:1px solid rgba(255,159,67,0.5);color:var(--text);font-size:12px;line-height:1.35">'+
     '<div style="flex:1"><b>'+title+'</b><br><span style="color:var(--text2)">'+body+'</span></div>'+
-    '<button class="btn btn-xs btn-secondary" onclick="retrySyncFromBanner()">Riprova</button>'+
+    '<button class="btn btn-xs btn-secondary" onclick="cloudBannerAction()">'+label+'</button>'+
   '</div>';
+}
+
+function cloudBannerAction() {
+  if (_versionConflict) { openSyncConflictModal(); return; }
+  retrySyncFromBanner();
 }
 
 function retrySyncFromBanner() {
@@ -1589,9 +1685,102 @@ function retrySyncFromBanner() {
   syncToCloud();
 }
 
+// --- Conflitto di versione -------------------------------------------------
+// Non uniamo ancora per id (rimandato): chiediamo esplicitamente quale
+// versione tenere, senza sovrascrivere nulla in automatico.
+function _openVersionConflict(cloudState, cloudVersion, reason) {
+  _versionConflict = {
+    cloudState: cloudState || null,
+    cloudVersion: (cloudVersion == null ? 0 : parseInt(cloudVersion,10) || 0),
+    cloudSessions: (cloudState && cloudState.sessions ? cloudState.sessions.length : 0),
+    reason: reason || 'write'
+  };
+  _markSyncPending();
+  showSyncConflictModal();
+  updateCloudBanner();
+}
+
+function showSyncConflictModal() {
+  if (!_versionConflict) return;
+  var info = document.getElementById('sync-conflict-info');
+  if (info) {
+    var localN = (state.sessions || []).length;
+    var cloudN = _versionConflict.cloudSessions;
+    info.innerHTML =
+      '<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:16px">' +
+        'Il cloud è alla <b style="color:var(--text)">versione ' + _versionConflict.cloudVersion + '</b> con ' +
+        '<b style="color:var(--text)">' + cloudN + '</b> session' + (cloudN === 1 ? 'e' : 'i') + '.<br>' +
+        'Questo dispositivo ha <b style="color:var(--text)">' + localN + '</b> session' + (localN === 1 ? 'e' : 'i') +
+        ' e modifiche non ancora caricate.<br><br>' +
+        'La fusione automatica non è ancora attiva: scegli tu quale versione tenere. ' +
+        'La scelta opposta resta nel backup esportato, se ne hai fatto uno.' +
+      '</div>';
+  }
+  openModal('modal-sync-conflict');
+}
+
+function openSyncConflictModal() {
+  if (!_versionConflict) { showToast('Nessun conflitto da risolvere'); return; }
+  showSyncConflictModal();
+}
+
+function resolveSyncConflict(choice) {
+  if (!_versionConflict) { closeModal('modal-sync-conflict'); return; }
+
+  if (choice === 'cloud') {
+    closeModal('modal-sync-conflict');
+    if (_versionConflict.cloudState) {
+      var cv = _versionConflict.cloudVersion;
+      _applyCloudState(_versionConflict.cloudState, cv);
+      _stampCloudVersion(cv, true);
+      setKnownCloudSessions((state.sessions || []).length);
+      _versionConflict = null;
+      _clearSyncPending();
+      _refreshVisiblePage();
+      showToast('Dati del cloud ripristinati');
+    } else {
+      // La riga non esiste più: il locale può essere reinserito.
+      _versionConflict = null;
+      _stampCloudVersion(0, false);
+      _setLocalDirty(true);
+      _markSyncPending();
+      syncToCloud();
+    }
+    updateCloudBanner();
+    return;
+  }
+
+  if (choice === 'local') {
+    closeModal('modal-sync-conflict');
+    _versionConflict = null;
+    _forceUploadApproved = true;
+    _uploadBlockedByGuard = false;
+    _setLocalDirty(true);
+    _markSyncPending();
+    updateCloudBanner();
+    syncToCloud();
+    return;
+  }
+
+  // 'later': chiude la finestra ma il sync resta bloccato dal conflitto.
+  closeModal('modal-sync-conflict');
+  updateCloudBanner();
+}
+
+function _refreshVisiblePage() {
+  var activePage = document.querySelector('.page.active');
+  if (!activePage) return;
+  var pageId = activePage.id.replace('page-', '');
+  if (pageId === 'home') renderHome();
+  else if (pageId === 'storico') renderStorico();
+  else if (pageId === 'template') renderTemplates();
+  else if (pageId === 'profilo') renderProfilo();
+}
+
 async function syncToCloud() {
   if (!currentUser) return;
   if (_syncInFlight) { _markSyncPending(); return; }
+  if (_versionConflict) { _markSyncPending(); updateCloudBanner(); return; }
   if (cloudBlocked) { _markSyncPending(); updateCloudBanner(); return; }
   if (_uploadBlockedByGuard && !_forceUploadApproved) { _markSyncPending(); updateCloudBanner(); return; }
 
@@ -1613,8 +1802,7 @@ async function syncToCloud() {
   showSyncIndicator('⏳ Sync...');
   try {
     var now = new Date().toISOString();
-    // Store last_updated inside the state payload so we can compare it
-    // against the cloud value before overwriting (see loadFromCloud / _onLogin)
+    // last_updated resta informativo: il confronto tra dispositivi usa version.
     state.last_updated = now;
     var toSave = {
       templates: state.templates, sessions: state.sessions,
@@ -1626,17 +1814,24 @@ async function syncToCloud() {
       misurazioni: state.misurazioni,
       last_updated: now
     };
-    // Also persist the timestamp locally so we can read it offline
+    // Persist locally first so an interrupted upload does not lose data.
     _saveToLocal();
-    var { error } = await supa.from('user_data').upsert({
-      user_id: currentUser.id,
-      state: toSave,
-      updated_at: now
-    }, { onConflict: 'user_id' });
-    if (error) throw error;
+
+    var res = await _writeCloudState(toSave, now);
+    if (res.conflict) {
+      await _handleVersionConflict(res.fresh);
+      return;
+    }
+
     _forceUploadApproved = false;
     _uploadBlockedByGuard = false;
     _lastUploadedTs = new Date(now).getTime();
+    if (res.version != null) {
+      _stampCloudVersion(res.version, true);
+      _setSyncedVersion(res.version);
+      _lastUploadedVersion = res.version;
+    }
+    _setLocalDirty(false);
     setKnownCloudSessions((toSave.sessions || []).length);
     if (state.last_updated !== now) {
       // Lo stato è cambiato mentre l'upload era in corso: rimanda il salvataggio.
@@ -1660,36 +1855,171 @@ async function syncToCloud() {
   }
 }
 
+// Scrittura con controllo di versione.
+// - inserisce la riga se non esiste (version 1)
+// - altrimenti update condizionato a version = ultima letta, poi incrementa
+// - se l'update non tocca righe, restituisce {conflict:true, fresh}
+async function _writeCloudState(toSave, now) {
+  if (!_versioningAvailable) {
+    // Colonna version non ancora presente: comportamento precedente.
+    var up = await supa.from('user_data').upsert({
+      user_id: currentUser.id,
+      state: toSave,
+      updated_at: now
+    }, { onConflict: 'user_id' });
+    if (up.error) throw up.error;
+    return { ok: true, version: null };
+  }
+
+  // Se non conosciamo la version, rileggiamo prima di scrivere.
+  if (_cloudVersion === null) {
+    var first = await loadFromCloud();
+    if (first.status === 'error') throw new Error(first.error || 'Errore di lettura');
+    _stampCloudVersion(first.status === 'empty' ? 0 : first.version, first.status !== 'empty');
+  }
+
+  // La lettura può aver scoperto che la colonna non esiste.
+  if (!_versioningAvailable) {
+    var upLegacy = await supa.from('user_data').upsert({
+      user_id: currentUser.id,
+      state: toSave,
+      updated_at: now
+    }, { onConflict: 'user_id' });
+    if (upLegacy.error) throw upLegacy.error;
+    return { ok: true, version: null };
+  }
+
+  if (!_cloudRowExists) {
+    var ins = await supa.from('user_data').insert({
+      user_id: currentUser.id,
+      state: toSave,
+      updated_at: now,
+      version: 1
+    }).select('version').single();
+    if (ins.error) {
+      // Riga creata nel frattempo da un altro dispositivo.
+      if (String(ins.error.code || '') === '23505') {
+        var freshIns = await loadFromCloud();
+        return { conflict: true, fresh: freshIns };
+      }
+      throw ins.error;
+    }
+    return { ok: true, version: parseInt(ins.data.version,10) };
+  }
+
+  var seen = _cloudVersion;
+  var upd = await supa.from('user_data').update({
+    state: toSave,
+    updated_at: now,
+    version: seen + 1
+  }).eq('user_id', currentUser.id)
+    .eq('version', seen)
+    .select('version');
+
+  if (upd.error) throw upd.error;
+  if (!upd.data || upd.data.length === 0) {
+    // Nessuna riga aggiornata: qualcun altro ha scritto nel frattempo.
+    var fresh = await loadFromCloud();
+    return { conflict: true, fresh: fresh };
+  }
+  return { ok: true, version: parseInt(upd.data[0].version,10) };
+}
+
+async function _handleVersionConflict(fresh) {
+  if (!fresh || fresh.status === 'error') {
+    cloudBlocked = true;
+    _markSyncPending();
+    showSyncIndicator('⚠️ Cloud non raggiunto');
+    _scheduleCloudRetry();
+    return;
+  }
+  if (fresh.status === 'empty') {
+    // La riga non esiste più: reinseriamo i dati locali.
+    _stampCloudVersion(0, false);
+    _markSyncPending();
+    setTimeout(function(){ if (!_versionConflict && !cloudBlocked) syncToCloud(); }, 250);
+    return;
+  }
+  _stampCloudVersion(fresh.version, true);
+  _openVersionConflict(fresh.state, fresh.version, 'write');
+}
+
 // Fetches cloud state and returns an explicit result:
-//   {status:'ok', state, last_updated} | {status:'empty'} | {status:'error', error}
+//   {status:'ok', state, last_updated, version, rowExists}
+// | {status:'empty', version:0, rowExists:false}
+// | {status:'error', error}
 // Un errore di rete NON è "nessun dato": senza questa distinzione l'app
 // poteva creare i template di default e sovrascrivere il cloud.
 async function loadFromCloud() {
   if (!currentUser) return {status:'error', error:'Utente non autenticato'};
   try {
-    var { data, error } = await supa
-      .from('user_data')
-      .select('state, updated_at')
-      .eq('user_id', currentUser.id)
-      .single();
+    var data, error;
+    var withVersion = _versioningAvailable;
+    if (withVersion) {
+      var q1 = await supa
+        .from('user_data')
+        .select('state, updated_at, version')
+        .eq('user_id', currentUser.id)
+        .single();
+      data = q1.data; error = q1.error;
+      if (error && _isMissingVersionError(error)) {
+        // SQL del Blocco B non ancora eseguito: si continua senza versioning.
+        _versioningAvailable = false;
+        withVersion = false;
+        error = null;
+        var q2 = await supa
+          .from('user_data')
+          .select('state, updated_at')
+          .eq('user_id', currentUser.id)
+          .single();
+        data = q2.data; error = q2.error;
+      }
+    } else {
+      var q3 = await supa
+        .from('user_data')
+        .select('state, updated_at')
+        .eq('user_id', currentUser.id)
+        .single();
+      data = q3.data; error = q3.error;
+    }
+
     if (error) {
       var code = String(error.code || '');
       var msg  = String(error.message || '');
       // PGRST116 = .single() con zero righe: il cloud è vuoto, non è un errore.
-      if (code === 'PGRST116' || /0 rows|no rows/i.test(msg)) return {status:'empty'};
+      if (code === 'PGRST116' || /0 rows|no rows/i.test(msg)) {
+        _stampCloudVersion(0, false);
+        return {status:'empty', version:0, rowExists:false};
+      }
       return {status:'error', error:msg || code || 'Errore di lettura'};
     }
-    if (!data || !data.state) return {status:'empty'};
+
+    var ver = (withVersion && data && data.version != null) ? parseInt(data.version,10) : null;
+    if (!data || !data.state) {
+      // La riga esiste ma non ha ancora uno state valido.
+      _stampCloudVersion(ver == null ? 0 : ver, true);
+      return {status:'ok', state:{}, last_updated:null, version:ver, rowExists:true};
+    }
+    _stampCloudVersion(ver == null ? 0 : ver, true);
     return {
       status: 'ok',
       state: data.state,
       // Prefer the timestamp stored inside the payload (more accurate);
-      // fall back to the updated_at column
-      last_updated: (data.state && data.state.last_updated) || data.updated_at || null
+      // fall back to the updated_at column. Resta solo informativo.
+      last_updated: (data.state && data.state.last_updated) || data.updated_at || null,
+      version: ver,
+      rowExists: true
     };
   } catch(e) {
     return {status:'error', error:(e && e.message) || 'Errore di rete'};
   }
+}
+
+function _isMissingVersionError(err) {
+  if (!err) return false;
+  var code = String(err.code || '');
+  var msg  = String(err.message || '');
+  return code === '42703' || /column .*version.* does not exist/i.test(msg);
 }
 
 function _readLocalState() {
@@ -1704,37 +2034,87 @@ function _stateHasData(p) {
 }
 
 // Sceglie tra cloud e locale. Usata al login e dopo una riconnessione.
+// Con il versioning la version e' l'unico criterio: il timestamp serve solo
+// come fallback durante la migrazione (colonna non ancora presente).
 async function _reconcileCloud(cloudResult, localParsed) {
-  var cloudTs = cloudResult && cloudResult.status === 'ok' ? new Date(cloudResult.last_updated || 0).getTime() : 0;
-  var localTs = localParsed ? new Date(localParsed.last_updated || 0).getTime() : 0;
   var hasCloud = cloudResult && cloudResult.status === 'ok' && _stateHasData(cloudResult.state);
   var hasLocal = _stateHasData(localParsed);
+  var localV   = _readStoredVersion();
+  var cloudV   = !cloudResult ? null :
+    (cloudResult.status === 'empty' ? 0 :
+      (cloudResult.version != null ? cloudResult.version : _cloudVersion));
 
-  if (cloudResult && cloudResult.status === 'ok') setKnownCloudSessions(((cloudResult.state.sessions) || []).length);
-  else if (cloudResult && cloudResult.status === 'empty') setKnownCloudSessions(0);
-
-  if (hasCloud && hasLocal) {
-    if (localTs > cloudTs) {
-      // Local is NEWER — use it and push it up to fix the cloud
-      _applyState(localParsed);
-      showSyncIndicator('📱 Dati locali più recenti — upload in corso...');
-      await syncToCloud();
-    } else {
-      // Cloud is newer (o stesso timestamp): il cloud è la fonte canonica
-      _applyState(cloudResult.state);
-      _saveToLocal();
-      showSyncIndicator(cloudTs > localTs ? '☁️ Dati cloud aggiornati' : '☁️ Dati cloud sincronizzati');
-    }
-  } else if (hasCloud) {
-    // Only cloud has data
-    _applyState(cloudResult.state);
-    _saveToLocal();
-  } else if (hasLocal) {
-    // Only local has data — push it up
-    _applyState(localParsed);
-    await syncToCloud();
+  if (cloudResult && cloudResult.status === 'ok') {
+    setKnownCloudSessions(((cloudResult.state && cloudResult.state.sessions) || []).length);
+  } else if (cloudResult && cloudResult.status === 'empty') {
+    setKnownCloudSessions(0);
   }
-  // else: neither has data — _initApp crea i default (solo se il cloud è leggibile)
+
+  // Nessuno dei due ha dati: _initApp crea i default (solo se il cloud è leggibile).
+  if (!hasCloud && !hasLocal) {
+    _setLocalDirty(false);
+    if (cloudV != null) _setSyncedVersion(cloudV);
+    return;
+  }
+
+  // Solo cloud.
+  if (hasCloud && !hasLocal) {
+    _applyCloudState(cloudResult.state, cloudV);
+    return;
+  }
+
+  // Solo locale: crea o aggiorna la riga.
+  if (!hasCloud && hasLocal) {
+    _applyState(localParsed);
+    _setLocalDirty(true);
+    await syncToCloud();
+    return;
+  }
+
+  // Entrambi hanno dati.
+  var versionsUsable = _versioningAvailable && localV != null &&
+    (cloudResult.status === 'empty' || cloudResult.version != null || _cloudVersion != null);
+
+  if (versionsUsable) {
+    if (localV === cloudV) {
+      if (_localDirty) {
+        // Stessa base, ma ci sono modifiche non caricate: vince il locale.
+        _applyState(localParsed);
+        await syncToCloud();
+      } else {
+        // Allineati: il cloud resta la fonte canonica.
+        _applyCloudState(cloudResult.state, cloudV);
+      }
+      return;
+    }
+    if (localV < cloudV) {
+      if (_localDirty) {
+        // Il cloud è andato avanti mentre il locale ha modifiche: conflitto.
+        _applyState(localParsed);
+        _openVersionConflict(cloudResult.state, cloudV, 'login');
+      } else {
+        _applyCloudState(cloudResult.state, cloudV);
+      }
+      return;
+    }
+    // localV > cloudV: il locale è più recente.
+    _applyState(localParsed);
+    _setLocalDirty(true);
+    await syncToCloud();
+    return;
+  }
+
+  // Migrazione (versioning non disponibile o locale senza version):
+  // si usa ancora il timestamp, una sola volta.
+  var cloudTs = cloudResult && cloudResult.status === 'ok' ? new Date(cloudResult.last_updated || 0).getTime() : 0;
+  var localTs = localParsed ? new Date(localParsed.last_updated || 0).getTime() : 0;
+  if (localTs > cloudTs) {
+    _applyState(localParsed);
+    _setLocalDirty(true);
+    await syncToCloud();
+  } else {
+    _applyCloudState(cloudResult.state, cloudV);
+  }
 }
 
 function _scheduleCloudRetry() {
@@ -1749,6 +2129,7 @@ async function retryCloudNow() {
   if (!currentUser) return;
   clearTimeout(_cloudRetryTimer);
   showSyncIndicator('⏳ Riconnessione...');
+  _versioningAvailable = true;   // se l'SQL è stato appena eseguito, attivalo
   var res = await loadFromCloud();
   cloudReadStatus = res.status;
   cloudReadError = res.error || '';
@@ -1769,6 +2150,7 @@ async function retryCloudNow() {
 
 function _retrySyncIfNeeded() {
   if (!currentUser) return;
+  if (_versionConflict) { updateCloudBanner(); return; }
   if (cloudBlocked) { retryCloudNow(); return; }
   if (syncPending && !_uploadBlockedByGuard) syncToCloud();
 }
@@ -1852,6 +2234,11 @@ async function authLogout() {
   cloudBlocked = false;
   _uploadBlockedByGuard = false;
   _forceUploadApproved = false;
+  _versionConflict = null;
+  _lastUploadedVersion = 0;
+  _stampCloudVersion(null, false);
+  _setSyncedVersion(null);
+  _setLocalDirty(false);
   updateCloudBanner();
   document.getElementById('auth-overlay').style.display = 'flex';
   document.getElementById('auth-email').value = '';
@@ -1876,12 +2263,39 @@ function _subscribeRealtime() {
       table: 'user_data',
       filter: 'user_id=eq.' + currentUser.id
     }, function(payload) {
-      // Another device updated our row — reload state from the payload
-      var p = payload.new.state;
+      // Another device updated our row — reload state from the payload.
+      var p = payload.new && payload.new.state;
       if (!p) return;
-      // Ignora l'eco del nostro stesso upload e i dati più vecchi del locale.
-      // Prima qui c'era un guard su _syncDebounceTimer che, non tornando mai
-      // a null, spegneva il realtime dopo il primo salvataggio.
+      // Durante un nostro upload lasciamo finire il controllo di versione.
+      if (_syncInFlight) return;
+
+      var incomingV = (payload.new && payload.new.version != null) ? parseInt(payload.new.version,10) : null;
+
+      if (_versioningAvailable && incomingV != null && isFinite(incomingV)) {
+        // La version sostituisce il confronto dei timestamp.
+        if (incomingV <= _lastUploadedVersion) return;          // eco del nostro upload
+        if (_cloudVersion != null && incomingV <= _cloudVersion) return; // già visto
+
+        if (_localDirty) {
+          // Non sovrascrivere modifiche locali non ancora caricate.
+          _stampCloudVersion(incomingV, true);
+          _openVersionConflict(p, incomingV, 'realtime');
+          return;
+        }
+
+        _applyState(p);
+        _stampCloudVersion(incomingV, true);
+        _setLocalDirty(false);
+        _saveToLocal();
+        setKnownCloudSessions((p.sessions || []).length);
+        _clearSyncPending();
+        updateCloudBanner();
+        _refreshVisiblePage();
+        showSyncIndicator('🔄 Aggiornato');
+        return;
+      }
+
+      // Fallback senza versioning: comportamento precedente basato sul tempo.
       var incomingTs = new Date(p.last_updated || 0).getTime();
       var currentTs  = new Date(state.last_updated || 0).getTime();
       if (incomingTs <= _lastUploadedTs) return;
@@ -1891,15 +2305,7 @@ function _subscribeRealtime() {
       setKnownCloudSessions((p.sessions || []).length);
       _clearSyncPending();
       updateCloudBanner();
-      // Refresh current visible page
-      var activePage = document.querySelector('.page.active');
-      if (activePage) {
-        var pageId = activePage.id.replace('page-', '');
-        if (pageId === 'home') renderHome();
-        else if (pageId === 'storico') renderStorico();
-        else if (pageId === 'template') renderTemplates();
-        else if (pageId === 'profilo') renderProfilo();
-      }
+      _refreshVisiblePage();
       showSyncIndicator('🔄 Aggiornato');
     })
     .subscribe();
@@ -1909,8 +2315,11 @@ async function _onLogin(user) {
   currentUser = user;
   _authSetLoading(false);
   _lastUploadedTs = 0;
+  _lastUploadedVersion = 0;
   _uploadBlockedByGuard = false;
   _forceUploadApproved = false;
+  _versionConflict = null;
+  _versioningAvailable = true;   // riprova a leggere la colonna version
   _clearSyncPending();
 
   // Read both sources BEFORE applying either one.
@@ -2038,6 +2447,9 @@ function saveState() {
   // Always stamp the time of the last local change so _onLogin can compare
   state.last_updated = new Date().toISOString();
   _saveToLocal();
+  // Dirty solo per modifiche fatte da un utente loggato: le pulizie locali
+  // (es. timer di recupero scaduto) non devono creare falsi conflitti.
+  if (currentUser) _setLocalDirty(true);
   _markSyncPending();
   // Debounce cloud sync by 2s to avoid hammering on rapid changes
   clearTimeout(_syncDebounceTimer);
@@ -3783,7 +4195,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.4.0';
+var APP_VERSION = '4.5.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -3842,7 +4254,15 @@ function renderProfilo() {
   renderAppDiag();
   document.getElementById('profile-name').value=state.profile.name||'Atleta';
   var accEl = document.getElementById('profilo-account-info');
-  if (accEl && currentUser) accEl.textContent = '✅ Connesso come ' + currentUser.email;
+  if (accEl) accEl.textContent = currentUser ? ('✅ Connesso come ' + currentUser.email) : '';
+  var syncEl = document.getElementById('profilo-sync-version');
+  if (syncEl) {
+    if (!currentUser) syncEl.textContent = '';
+    else if (_cloudVersion === null) syncEl.textContent = 'Versione dati cloud: non disponibile';
+    else syncEl.textContent = 'Versione dati cloud: ' + _cloudVersion + (syncPending ? ' · modifiche in coda' : '');
+  }
+  var dbWarn = document.getElementById('profilo-db-warning');
+  if (dbWarn) dbWarn.style.display = (currentUser && !_versioningAvailable) ? 'block' : 'none';
   document.querySelectorAll('#unit-chips .chip').forEach(function(c){c.classList.toggle('selected',c.textContent===state.profile.unit);});
   // Populate PR dropdown with exercises that have history
   var prs=calcPRs();
