@@ -133,6 +133,8 @@ select.input{appearance:none}
 .set-inp{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px 3px;color:var(--text);font-size:15px;font-weight:700;text-align:center;width:100%;outline:none;transition:border-color 0.2s;font-family:inherit}
 .set-inp:focus{border-color:var(--accent)}
 .set-rpe{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 2px;color:var(--text);font-size:12px;font-weight:600;text-align:center;width:100%;outline:none;appearance:none;font-family:inherit}
+.set-rpe-wrap{display:flex;flex-direction:column;gap:1px;min-width:0}
+.set-rir{font-size:8px;font-weight:600;color:var(--text3);text-align:center;line-height:1.2;white-space:nowrap}
 .set-chk{width:28px;height:28px;border-radius:50%;border:2px solid var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;transition:all 0.2s;margin:0 auto}
 .set-chk.ok{background:var(--accent);border-color:var(--accent);color:#000}
 .sets-actions{display:flex;gap:0;background:var(--bg2);border:1px solid var(--border);border-top:none;overflow:hidden}
@@ -171,9 +173,16 @@ select.input{appearance:none}
 .hs-lbl{font-size:11px;color:var(--text2)}
 
 .muscle-bar{margin-bottom:10px}
-.muscle-bar-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
-.muscle-bar-track{height:6px;background:var(--bg4);border-radius:3px;overflow:hidden}
-.muscle-bar-fill{height:100%;border-radius:3px;transition:width 0.6s ease}
+.muscle-bar-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;gap:8px}
+.muscle-bar-track{position:relative;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden}
+.muscle-bar-target{position:absolute;top:0;bottom:0;background:rgba(232,255,71,0.14);border-left:1px dashed rgba(232,255,71,0.45);border-right:1px dashed rgba(232,255,71,0.45);z-index:0}
+.muscle-bar-fill{position:relative;height:100%;border-radius:3px;transition:width 0.6s ease;z-index:1}
+.muscle-special-title{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 4px}
+.muscle-special-row{display:flex;justify-content:space-between;font-size:12px;color:var(--text2);padding:5px 0;border-bottom:1px solid var(--border)}
+.muscle-special-row:last-child{border-bottom:none}
+.muscle-delta-up{color:var(--green);font-size:11px;font-weight:700}
+.muscle-delta-dn{color:var(--red);font-size:11px;font-weight:700}
+.muscle-delta-0{color:var(--text3);font-size:11px}
 .chart-container{position:relative;height:200px;margin:4px 0}
 
 .empty-state{text-align:center;padding:40px 30px}
@@ -196,6 +205,8 @@ select.input{appearance:none}
 .emoji-opt:active{transform:scale(0.9)}
 
 .stat-box{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;flex:1;text-align:center;min-width:0}
+.week-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (min-width:600px){.week-summary-grid{grid-template-columns:repeat(4,1fr)}}
 .stat-box-val{font-size:22px;font-weight:900;color:var(--accent);line-height:1}
 .stat-box-lbl{font-size:10px;color:var(--text2);margin-top:2px}
 
@@ -288,18 +299,58 @@ select.input{appearance:none}
     <div class="page-subtitle">I tuoi progressi</div>
   </div>
   <div class="card">
+    <div class="card-title">Riepilogo settimanale (lun – dom)</div>
+    <div id="week-summary" class="week-summary-grid"></div>
+    <div id="week-summary-note" style="font-size:11px;color:var(--text2);margin-top:10px;line-height:1.5"></div>
+  </div>
+  <div class="card">
     <div class="card-title">Volume settimanale (tutto lo storico)</div>
     <div class="chart-container" style="overflow-x:auto"><canvas id="chart-volume"></canvas></div>
   </div>
   <div class="card">
-    <div class="card-title">Distribuzione muscolare (serie totali)</div>
+    <div class="card-title">Distribuzione muscolare (settimana corrente)</div>
     <div id="muscle-distribution"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Filtra sessioni</div>
+    <div class="input-group">
+      <select class="input" id="hist-filter-template" onchange="onHistoryFilterChange()">
+        <option value="">Tutte le schede</option>
+      </select>
+    </div>
+    <div class="input-group">
+      <select class="input" id="hist-filter-exercise" onchange="onHistoryFilterChange()">
+        <option value="">Tutti gli esercizi</option>
+      </select>
+    </div>
+    <div class="flex gap-8" style="margin-bottom:12px">
+      <div style="flex:1;min-width:0">
+        <label class="input-label" for="hist-filter-from">Da</label>
+        <input class="input" type="date" id="hist-filter-from" onchange="onHistoryFilterChange()">
+      </div>
+      <div style="flex:1;min-width:0">
+        <label class="input-label" for="hist-filter-to">A</label>
+        <input class="input" type="date" id="hist-filter-to" onchange="onHistoryFilterChange()">
+      </div>
+    </div>
+    <div class="input-group" style="margin-bottom:12px">
+      <input class="input" type="search" id="hist-filter-search" placeholder="Cerca per nome sessione o esercizio" oninput="onHistorySearchInput()">
+    </div>
+    <div class="flex items-center justify-between gap-8" style="flex-wrap:wrap">
+      <div id="hist-filter-count" style="font-size:12px;color:var(--text2)"></div>
+      <div class="flex gap-8">
+        <button class="btn btn-secondary btn-sm" onclick="resetHistoryFilters()">Azzera</button>
+        <button class="btn btn-primary btn-sm" onclick="exportHistoryCsv()">⬇️ CSV</button>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px">I filtri valgono solo per l'elenco: grafico del volume (tutto lo storico) e distribuzione (settimana corrente) restano indipendenti.</div>
   </div>
   <div class="section-header">
     <div class="section-title">Sessioni</div>
     <div class="section-link" onclick="openRetroModal()">+ Retroattivo</div>
   </div>
   <div id="history-list"></div>
+  <div id="history-more" style="padding:0 16px"></div>
   <div style="height:20px"></div>
 </div>
 
@@ -427,7 +478,7 @@ select.input{appearance:none}
     <div id="ex-prog-wrap" style="display:none">
       <div class="flex gap-8 mb-12" id="ex-prog-stat-boxes" style="padding:0 16px;margin-bottom:12px;flex-wrap:wrap;display:flex;gap:8px"></div>
       <div class="card" style="margin-top:0">
-        <div class="card-title">Peso massimo nel tempo (kg)</div>
+        <div class="card-title">Carico massimo nel tempo (kg)</div>
         <div class="chart-container"><canvas id="chart-ex-prog-weight"></canvas></div>
       </div>
       <div class="card">
@@ -595,11 +646,12 @@ select.input{appearance:none}
       <div style="flex:1"><label class="input-label">Recupero (sec)</label><input type="number" class="input" id="cfg-rest" value="120" min="0" step="5"></div>
       <div style="flex:1" id="cfg-rpe-cell">
         <label class="input-label">RPE target</label>
-        <select class="input" id="cfg-rpe">
+        <select class="input" id="cfg-rpe" onchange="updateCfgRirHint()">
           <option value="">-</option>
           <option>6</option><option>6.5</option><option>7</option><option>7.5</option>
           <option>8</option><option>8.5</option><option>9</option><option>9.5</option><option>10</option>
         </select>
+        <div id="cfg-rpe-hint" style="font-size:10px;color:var(--text3);margin-top:4px">RIR —</div>
       </div>
     </div>
     <div class="input-group" id="cfg-warmup-row">
@@ -1038,6 +1090,75 @@ function snapWeight(v) {
 // Formato senza zeri inutili: 50 e non 50.0
 function fmtWeight(v) {
   return String(Math.round(snapWeight(v) * 100) / 100);
+}
+
+// ============================================================
+// CARICO EFFETTIVO E RIR
+// ============================================================
+// Esercizi in cui il corpo è il carico: trazioni, push-up e dip. Per questi
+// il peso corporeo (ultima misurazione) si somma all'eventuale zavorra.
+// Core e isolamento a corpo libero restano fuori: 80 kg di crunch
+// gonfierebbero il volume senza significato.
+var BODYWEIGHT_LOAD_IDS = { pullup:1, pu0:1, dip:1 };
+
+function isBodyweightLoadExercise(exId) {
+  if (BODYWEIGHT_LOAD_IDS[exId]) return true;
+  var ex = findExercise(exId);
+  return !!(ex && ex.exerciseType === 'bodyweight' && ex.category === 'Multiarticolare');
+}
+
+// Ultimo peso corporeo registrato, in kg. 0 = nessuna misurazione utile.
+function latestBodyWeightKg() {
+  var best = null;
+  (state.misurazioni || []).forEach(function(m){
+    if (!m || m.date == null) return;
+    var w = parseFloat(m.weight);
+    if (!isFinite(w) || w <= 0) return;
+    if (!best || m.date > best.date) best = {date:m.date, weight:w};
+  });
+  return best ? best.weight : 0;
+}
+
+// Carico effettivo di una serie: peso corporeo (se l'esercizio lo usa) più
+// la zavorra scritta nel campo peso. Per gli altri esercizi è il peso stesso.
+function effectiveSetLoad(exId, set) {
+  var w = parseFloat(set && set.weight) || 0;
+  if (!isBodyweightLoadExercise(exId)) return w;
+  var bw = latestBodyWeightKg();
+  return bw ? bw + w : w;
+}
+
+// Volume di una serie di lavoro, con "per lato" ×2. Le serie di
+// riscaldamento non entrano mai nel volume.
+function setEffectiveVolume(exId, set, perSide) {
+  if (!set || set.type === 'warmup') return 0;
+  return effectiveSetLoad(exId, set) * (parseFloat(set.reps) || 0) * (perSide ? 2 : 1);
+}
+
+function exerciseEffectiveVolume(e) {
+  if (!e || !e.exerciseId) return 0;
+  return (e.sets || []).reduce(function(a, set){
+    return a + setEffectiveVolume(e.exerciseId, set, e.perSide);
+  }, 0);
+}
+
+function sessionEffectiveVolume(s) {
+  return (s && s.exercises ? s.exercises : []).reduce(function(a, e){
+    return a + exerciseEffectiveVolume(e);
+  }, 0);
+}
+
+// RIR = 10 - RPE: le ripetizioni lasciate in riserva.
+function rpeToRir(v) {
+  if (v === '' || v == null) return null;
+  var rpe = parseFloat(v);
+  if (!isFinite(rpe)) return null;
+  return Math.round(Math.max(0, 10 - rpe) * 10) / 10;
+}
+
+function rirText(v) {
+  var rir = rpeToRir(v);
+  return rir == null ? 'RIR —' : 'RIR ' + rir;
 }
 
 // I carry progressano anche in distanza, quindi un incremento puo' avere 'distance'.
@@ -3014,8 +3135,9 @@ function renderExProgresso() {
   state.sessions.forEach(function(s) {
     var e = (s.exercises||[]).find(function(e){ return e.exerciseId === exId; });
     if (!e || !e.sets || !e.sets.length) return;
-    var mx = Math.max.apply(null, e.sets.map(function(s){ return s.weight||0; }));
-    var vol = e.sets.reduce(function(a,s){ return a + (s.weight||0)*(s.reps||0); }, 0);
+    var workSets = e.sets.filter(function(st){ return st && st.type !== 'warmup'; });
+    var mx = Math.max.apply(null, [0].concat(workSets.map(function(st){ return effectiveSetLoad(exId, st); })));
+    var vol = e.sets.reduce(function(a,s){ return a + setEffectiveVolume(exId, s, e.perSide); }, 0);
     dataPoints.push({ label: new Date(s.date).toLocaleDateString('it-IT',{day:'numeric',month:'short'}), maxW: mx, vol: vol });
   });
 
@@ -3028,7 +3150,7 @@ function renderExProgresso() {
 
   document.getElementById('ex-prog-stat-boxes').innerHTML =
     '<div class="stat-box"><div class="stat-box-val">'+totalSess+'</div><div class="stat-box-lbl">Sessioni</div></div>'+
-    '<div class="stat-box"><div class="stat-box-val">'+maxWeight+'kg</div><div class="stat-box-lbl">Max peso</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+maxWeight+'kg</div><div class="stat-box-lbl">Max carico</div></div>'+
     '<div class="stat-box"><div class="stat-box-val">'+Math.round(totalVol/totalSess)+'kg</div><div class="stat-box-lbl">Vol. medio</div></div>'+
     '<div class="stat-box"><div class="stat-box-val">'+(totalVol/1000).toFixed(1)+'t</div><div class="stat-box-lbl">Vol. totale</div></div>';
 
@@ -3188,7 +3310,7 @@ function renderHome() {
   document.getElementById('hero-name').innerHTML = name + ',<br><span style="color:var(--accent)">SI ALLENA!</span>';
   var total = state.sessions.length;
   var thisWeek = state.sessions.filter(function(s){return (Date.now()-new Date(s.date).getTime())<7*86400000;}).length;
-  var totalVol = state.sessions.reduce(function(a,s){return a+(s.totalVolume||0);},0);
+  var totalVol = state.sessions.reduce(function(a,s){return a+sessionEffectiveVolume(s);},0);
   document.getElementById('home-stats').innerHTML =
     '<div class="stat-card"><div class="stat-value">'+total+'</div><div class="stat-label">Sessioni totali</div></div>'+
     '<div class="stat-card"><div class="stat-value">'+thisWeek+'</div><div class="stat-label">Questa settimana</div></div>'+
@@ -3209,7 +3331,7 @@ function renderHome() {
       '<div class="history-stats">'+
       '<div><div class="hs-val">'+(last.exercises?last.exercises.length:0)+'</div><div class="hs-lbl">esercizi</div></div>'+
       '<div><div class="hs-val">'+(last.totalSets||0)+'</div><div class="hs-lbl">serie</div></div>'+
-      '<div><div class="hs-val">'+((last.totalVolume||0)/1000).toFixed(1)+'t</div><div class="hs-lbl">volume</div></div>'+
+      '<div><div class="hs-val">'+(sessionEffectiveVolume(last)/1000).toFixed(1)+'t</div><div class="hs-lbl">volume</div></div>'+
       '<div><div class="hs-val">'+fmtDuration(last.duration||0)+'</div><div class="hs-lbl">durata</div></div>'+
       '</div></div>';
   } else {
@@ -3282,7 +3404,7 @@ function renderTplExerciseList() {
     var incFlag = hasInc(e.increments);
     return '<div class="flex items-center gap-8" style="margin-bottom:10px">'+
       '<div style="flex:1"><div class="font-bold" style="font-size:14px">'+escapeHtml(ex.name)+'</div>'+
-      '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+cfgSummary(e)+(e.rpe?' RPE '+e.rpe:'')+(incFlag?' +prog':'')+'</div></div>'+
+      '<div style="font-size:12px;color:var(--text2)">'+(e.warmup||0)+' WU + '+cfgSummary(e)+(incFlag?' +prog':'')+'</div></div>'+
       '<button class="btn btn-xs btn-secondary" onclick="configureTemplateExercise('+i+')">Config</button>'+
       '<button class="btn btn-xs btn-danger" onclick="removeTemplateExercise('+i+')">X</button></div>';
   }).join('') || '<div style="color:var(--text3);font-size:13px;margin-bottom:12px">Nessun esercizio aggiunto</div>';
@@ -3408,6 +3530,7 @@ function selectExercise(exId) {
     document.getElementById('cfg-rest').value   = last.rest || 120;
     // Zero out progression and RPE so user sets them fresh for next session
     document.getElementById('cfg-rpe').value = '';
+    updateCfgRirHint();
     increments = normInc(null);
     updateIncrementDisplay();
   }
@@ -3462,7 +3585,20 @@ function cfgSummary(cfg) {
   else txt = sets + '×' + reps + ' @ ' + fmtWeight(cfg.weight) + 'kg';
   // "Per lato" raddoppia serie e volume: va scritto, altrimenti il totale non torna
   if (cfg.perSide && exType !== 'cardio') txt += ' · per lato (×2)';
+  // RPE e RIR viaggiano insieme: 8 di RPE equivale a 2 ripetizioni in riserva.
+  if (cfg.rpe !== '' && cfg.rpe != null) txt += ' · RPE ' + cfg.rpe + ' · ' + rirText(cfg.rpe);
   return txt;
+}
+
+// Anteprima del RIR nella config: si aggiorna al cambio dell'RPE target.
+function updateCfgRirHint() {
+  var sel = document.getElementById('cfg-rpe');
+  var hint = document.getElementById('cfg-rpe-hint');
+  if (!sel || !hint) return;
+  var rir = rpeToRir(sel.value);
+  hint.textContent = rir == null
+    ? 'RIR — (quante ripetizioni in riserva)'
+    : 'RIR ' + rir + ' · ripetizioni in riserva';
 }
 
 // Type badge labels and colors
@@ -3560,6 +3696,7 @@ function openExerciseConfig(exId, existing) {
   document.getElementById('cfg-weight').value   = existing ? fmtWeight(existing.weight) : 0;
   document.getElementById('cfg-rest').value     = existing ? (existing.rest||120)   : 120;
   document.getElementById('cfg-rpe').value      = existing ? (existing.rpe||'')     : '';
+  updateCfgRirHint();
   document.getElementById('cfg-notes').value    = existing ? (existing.notes||'')   : '';
   // Carry / duration fields
   if (document.getElementById('cfg-distance')) document.getElementById('cfg-distance').value = existing ? (existing.distance||30) : 30;
@@ -3967,23 +4104,23 @@ function renderSessionExercises() {
     // Column headers depend on type
     var hdrCols, colTemplate;
     if (exType==='carry') {
-      hdrCols='<span>#</span><span>Peso (kg)</span><span>Dist (m)</span><span>RPE</span><span>OK</span>';
+      hdrCols='<span>#</span><span>Peso (kg)</span><span>Dist (m)</span><span>RPE/RIR</span><span>OK</span>';
       colTemplate='carry';
     } else if (exType==='cardio') {
       hdrCols='<span>#</span><span style="grid-column:2 / span 2">Durata (min)</span><span style="grid-column:5">OK</span>';
       colTemplate='cardio';
     } else if (exType==='timed') {
-      hdrCols='<span>#</span><span>Carico (kg)</span><span>Durata (s)</span><span>RPE</span><span>OK</span>';
+      hdrCols='<span>#</span><span>Carico (kg)</span><span>Durata (s)</span><span>RPE/RIR</span><span>OK</span>';
       colTemplate='timed';
     } else if ((exType==='power'||exType==='bodyweight') && withWeight) {
       // Zavorrata: peso della palla / della zavorra + ripetizioni
-      hdrCols='<span>#</span><span>'+(exType==='power'?'Palla (kg)':'Zavorra (kg)')+'</span><span>Rip</span><span>RPE</span><span>OK</span>';
+      hdrCols='<span>#</span><span>'+(exType==='power'?'Palla (kg)':'Zavorra (kg)')+'</span><span>Rip</span><span>RPE/RIR</span><span>OK</span>';
       colTemplate='strength';
     } else if (exType==='power'||exType==='bodyweight') {
-      hdrCols='<span>#</span><span colspan="2">Ripetizioni</span><span>RPE</span><span>OK</span>';
+      hdrCols='<span>#</span><span colspan="2">Ripetizioni</span><span>RPE/RIR</span><span>OK</span>';
       colTemplate='repsonly';
     } else {
-      hdrCols='<span>#</span><span>Peso (kg)</span><span>Rip</span><span>RPE</span><span>OK</span>';
+      hdrCols='<span>#</span><span>Peso (kg)</span><span>Rip</span><span>RPE/RIR</span><span>OK</span>';
       colTemplate='strength';
     }
     var setsHtml = ex.sets.map(function(set,setIdx){
@@ -4008,10 +4145,13 @@ function renderSessionExercises() {
         inputs='<input type="number" class="set-inp" value="'+(set.reps||4)+'" min="1" onchange="updateSet('+exIdx+','+setIdx+',\'reps\',this.value)" onfocus="this.select()" style="grid-column:span 2">';
       }
       var rpeHtml = (colTemplate==='cardio')?'<span></span>':
+        '<div class="set-rpe-wrap">'+
         '<select class="set-rpe" onchange="updateSet('+exIdx+','+setIdx+',\'rpe\',this.value)">'+
         '<option value="">-</option>'+
         ['6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option'+(set.rpe==r?' selected':'')+'>'+r+'</option>';}).join('')+
-        '</select>';
+        '</select>'+
+        '<span class="set-rir" id="set-rir-'+exIdx+'-'+setIdx+'">'+rirText(set.rpe)+'</span>'+
+        '</div>';
       // Riferimento "ultima volta" della stessa serie (solo serie di lavoro)
       var prevTxt = '';
       var workIdx = setIdx - wuCount;
@@ -4164,6 +4304,11 @@ function updateSet(exIdx,setIdx,field,value) {
   if (!state.activeSession) return;
   var set = state.activeSession.exercises[exIdx].sets[setIdx];
   set[field] = field==='rpe' ? value : (parseFloat(value)||0);
+  // RIR accanto all'RPE: aggiornamento immediato senza ridisegnare la riga.
+  if (field==='rpe') {
+    var rirEl = document.getElementById('set-rir-'+exIdx+'-'+setIdx);
+    if (rirEl) rirEl.textContent = rirText(value);
+  }
   // Se cambiano carico/ripetizioni il PR registrato non è più valido.
   // Si toglie l'evidenza dalla riga senza ri-renderizzare (non ruba il focus).
   if (field!=='rpe' && set.pr) {
@@ -4329,7 +4474,8 @@ function saveSetOptions() {
 function bestPerformanceBefore(exId, exIdx, setIdx) {
   var best = {weight:0, reps:0, est1rm:0};
   function consider(set) {
-    var w = set.weight||0, reps = set.reps||0;
+    // Carico effettivo: per trazioni/push-up/dip include il peso corporeo.
+    var w = effectiveSetLoad(exId, set), reps = set.reps||0;
     if (!w || !reps) return;
     // Il confronto tiene peso e ripetizioni della stessa serie: un 80×3 non
     // deve far sembrare "PR di ripetizioni" un 80×2 della settimana dopo.
@@ -4364,15 +4510,17 @@ function detectPR(exId, exIdx, setIdx) {
   if (!ex || !ex.sets[setIdx]) return null;
   var set = ex.sets[setIdx];
   if (set.type !== 'work') return null;
-  var w = set.weight||0, reps = set.reps||0;
+  var w = effectiveSetLoad(exId, set), reps = set.reps||0;
   if (!w || !reps) return null;   // senza carico non c'è un PR di peso confrontabile
   var best = bestPerformanceBefore(exId, exIdx, setIdx);
   if (!best.weight) return null;  // prima volta in assoluto: niente confronto
+  // Per il corpo libero il "carico" include il peso corporeo: dirlo chiaro.
+  var bodyweightLoad = isBodyweightLoadExercise(exId);
   if (w > best.weight + 1e-9) {
-    return {kind:'weight', icon:'🏆', msg:'PR peso: '+fmtWeight(w)+' kg (era '+fmtWeight(best.weight)+' kg)'};
+    return {kind:'weight', icon:'🏆', msg:'PR '+(bodyweightLoad?'carico':'peso')+': '+fmtWeight(w)+' kg (era '+fmtWeight(best.weight)+' kg)'};
   }
   if (Math.abs(w - best.weight) < WEIGHT_STEP/2 && reps > best.reps) {
-    return {kind:'reps', icon:'🏆', msg:'PR ripetizioni: '+reps+' a '+fmtWeight(w)+' kg (era '+best.reps+')'};
+    return {kind:'reps', icon:'🏆', msg:'PR ripetizioni: '+reps+' a '+fmtWeight(w)+' kg'+(bodyweightLoad?' di carico':'')+' (era '+best.reps+')'};
   }
   var est = w * (1 + reps/30);
   if (est > best.est1rm + 0.01) {
@@ -4862,26 +5010,400 @@ function renderStorico() {
     data:{labels:wAll.labels,datasets:[{data:wAll.values,borderColor:'#e8ff47',backgroundColor:'rgba(232,255,71,0.08)',borderWidth:2,fill:true,tension:0.4,pointBackgroundColor:'#e8ff47',pointRadius:wAll.labels.length>20?2:4,pointHoverRadius:6}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return (ctx.raw/1000).toFixed(1)+'t';}}}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#666',font:{size:10},maxTicksLimit:12,maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#666',font:{size:10},callback:function(v){return (v/1000).toFixed(1)+'t';}},beginAtZero:true}}}
   });
-  var dist=getMuscleDistribution();
-  var maxD=Math.max.apply(null,Object.values(dist).concat([1]));
-  document.getElementById('muscle-distribution').innerHTML = Object.keys(dist).sort(function(a,b){return dist[b]-dist[a];}).map(function(m){
-    return '<div class="muscle-bar"><div class="muscle-bar-label"><span>'+m+'</span><span style="color:'+(MUSCLE_COLORS[m]||'var(--accent)')+'">'+dist[m]+' serie</span></div>'+
-      '<div class="muscle-bar-track"><div class="muscle-bar-fill" style="width:'+(dist[m]/maxD*100)+'%;background:'+(MUSCLE_COLORS[m]||'var(--accent)')+'"></div></div></div>';
-  }).join('') || '<div style="color:var(--text3);font-size:13px">Nessun dato</div>';
-  if (!state.sessions.length){document.getElementById('history-list').innerHTML='<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Nessuna sessione</div><div class="empty-desc">Completa il primo allenamento</div></div>';return;}
-  document.getElementById('history-list').innerHTML = state.sessions.slice().reverse().map(function(s,i){
-    var idx=state.sessions.length-1-i;
-    var date=new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+  renderWeekMuscleDistribution();
+  renderWeekSummary();
+  renderHistoryFilters();
+  renderHistoryList();
+}
+
+// ------------------------------------------------------------
+// F1 — Riepilogo settimanale, filtri e caricamento progressivo
+// ------------------------------------------------------------
+var HISTORY_PAGE = 20;
+var historyFilter = { templateId:'', exerciseId:'', from:'', to:'', q:'', limit: HISTORY_PAGE };
+var _histSearchTimer = null;
+
+// Lunedì 00:00 della settimana che contiene la data indicata.
+function startOfWeek(date) {
+  var d = new Date(date);
+  d.setHours(0,0,0,0);
+  var day = d.getDay(); // 0 = domenica
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return d;
+}
+
+// Chiave YYYY-MM-DD in fuso locale: le date ISO a cavallo di mezzanotte
+// non devono spostarsi di un giorno (stessa logica di localDateValue).
+function histSessionDate(s) {
+  if (!s || !s.date) return '';
+  var d = new Date(s.date);
+  return isNaN(d.getTime()) ? '' : localDateValue(s.date);
+}
+
+function sessionTemplateName(s) {
+  var t = null;
+  if (s && s.templateId) t = findTemplateById(s.templateId);
+  if (!t && s && s.templateIdx != null) t = state.templates[s.templateIdx];
+  return (t && t.name) ? t.name : '';
+}
+
+// Riepilogo della settimana corrente (lun–dom).
+// "Sessioni previste" resta fuori finché non esiste la pianificazione della
+// sezione 4: meglio non mostrare un numero inventato.
+function renderWeekSummary() {
+  var el = document.getElementById('week-summary');
+  var noteEl = document.getElementById('week-summary-note');
+  if (!el) return;
+  var start = startOfWeek(new Date());
+  var end = new Date(start);
+  end.setDate(end.getDate() + 7);
+
+  var sessions = (state.sessions || []).filter(function(s){
+    var d = new Date(s && s.date);
+    return !isNaN(d.getTime()) && d >= start && d < end;
+  });
+
+  var volume = 0, sets = 0;
+  var prExercises = {};
+  sessions.forEach(function(s){
+    volume += sessionEffectiveVolume(s);
+    sets += s.totalSets || 0;
+    (s.exercises || []).forEach(function(e){
+      (e.sets || []).forEach(function(st){
+        if (st && st.pr && st.type !== 'warmup') prExercises[e.exerciseId] = 1;
+      });
+    });
+  });
+  var prCount = Object.keys(prExercises).length;
+  var volTxt = volume >= 1000 ? (volume/1000).toFixed(1)+'t' : Math.round(volume)+'kg';
+
+  // Confronto con la settimana precedente (stessi giorni, lun–dom).
+  var prevStart = new Date(start);
+  prevStart.setDate(prevStart.getDate() - 7);
+  var prevSessions = (state.sessions || []).filter(function(s){
+    var d = new Date(s && s.date);
+    return !isNaN(d.getTime()) && d >= prevStart && d < start;
+  });
+  var prevVolume = 0, prevSets = 0;
+  prevSessions.forEach(function(s){
+    prevVolume += sessionEffectiveVolume(s);
+    prevSets += s.totalSets || 0;
+  });
+  function deltaSpan(d, suffix) {
+    var cls = d > 0 ? 'muscle-delta-up' : (d < 0 ? 'muscle-delta-dn' : 'muscle-delta-0');
+    return '<span class="'+cls+'">'+(d > 0 ? '+' : '')+d+(suffix || '')+'</span>';
+  }
+  var cmp;
+  if (!prevSessions.length) {
+    cmp = 'Settimana precedente: nessun dato per il confronto';
+  } else {
+    var volDelta = Math.round(volume - prevVolume);
+    var volPct = prevVolume > 0 ? Math.round(volDelta / prevVolume * 100) : null;
+    cmp = 'vs settimana precedente: volume '+deltaSpan(volDelta, 'kg')+
+      (volPct != null ? ' ('+(volPct > 0 ? '+' : '')+volPct+'%)' : '')+
+      ' · serie '+deltaSpan(sets - prevSets, '')+
+      ' · sessioni '+deltaSpan(sessions.length - prevSessions.length, '');
+  }
+
+  el.innerHTML =
+    '<div class="stat-box"><div class="stat-box-val">'+sessions.length+'</div><div class="stat-box-lbl">Sessioni fatte</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+volTxt+'</div><div class="stat-box-lbl">Volume</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+sets+'</div><div class="stat-box-lbl">Serie</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+prCount+'</div><div class="stat-box-lbl">PR</div></div>';
+
+  if (!noteEl) return;
+  var todayKey = localDateValue(new Date());
+  var weekStartKey = localDateValue(start);
+  var nowRec = lastWeightRecord(todayKey);
+  var prevLimit = new Date(start);
+  prevLimit.setDate(prevLimit.getDate() - 1);
+  var prevRec = lastWeightRecord(localDateValue(prevLimit));
+  var parts = [];
+
+  function fmtMisDate(key) {
+    var mp = String(key).split('-');
+    var md = new Date(parseInt(mp[0],10), parseInt(mp[1],10)-1, parseInt(mp[2],10));
+    return md.toLocaleDateString('it-IT',{day:'numeric',month:'short'});
+  }
+
+  if (!nowRec) {
+    parts.push('Peso: nessuna misurazione registrata');
+  } else {
+    var w = nowRec.weight;
+    var txt = 'Peso: <b style="color:var(--text)">'+(Math.round(w*10)/10).toString().replace('.', ',')+' kg</b>';
+    if (nowRec.date < weekStartKey) {
+      // L'ultima misurazione è precedente a questa settimana: niente confronto
+      // con se stessa, si dice solo che manca il dato della settimana.
+      txt += ' · nessuna misurazione questa settimana (ultima '+fmtMisDate(nowRec.date)+')';
+    } else {
+      if (prevRec && prevRec.weight != null) {
+        var delta = Math.round((w - prevRec.weight)*10)/10;
+        var cls = delta > 0 ? 'mis-delta-up' : (delta < 0 ? 'mis-delta-dn' : 'mis-delta-0');
+        var arrow = delta > 0 ? '▲ +' : (delta < 0 ? '▼ ' : '=');
+        txt += ' <span class="'+cls+'">'+arrow+(Math.abs(delta)).toString().replace('.', ',')+' kg</span> vs settimana precedente';
+      } else {
+        txt += ' · nessun confronto precedente';
+      }
+      txt += ' · ultima misurazione '+fmtMisDate(nowRec.date);
+    }
+    parts.push(txt);
+  }
+  if (!sessions.length) parts.push('Nessuna sessione questa settimana');
+  noteEl.innerHTML = cmp + '<br>' + parts.join(' · ');
+}
+
+// Ultima misurazione con peso, con data <= maxKey (YYYY-MM-DD).
+function lastWeightRecord(maxKey) {
+  var best = null;
+  (state.misurazioni || []).forEach(function(m){
+    if (!m || m.weight == null || !m.date) return;
+    if (isNaN(parseFloat(m.weight))) return;
+    if (maxKey && m.date > maxKey) return;
+    if (!best || m.date > best.date) best = m;
+  });
+  if (best) best = {date:best.date, weight:parseFloat(best.weight)};
+  return best;
+}
+
+function renderHistoryFilters() {
+  var tSel = document.getElementById('hist-filter-template');
+  var eSel = document.getElementById('hist-filter-exercise');
+  if (!tSel || !eSel) return;
+
+  var tpls = (state.templates || []).filter(function(t){ return t && t.id; });
+  if (historyFilter.templateId && !tpls.some(function(t){ return t.id === historyFilter.templateId; })) {
+    historyFilter.templateId = '';
+  }
+  tSel.innerHTML = '<option value="">Tutte le schede</option>' + tpls.map(function(t){
+    return '<option value="'+escapeHtml(t.id)+'">'+escapeHtml(t.name || 'Scheda')+'</option>';
+  }).join('');
+  tSel.value = historyFilter.templateId;
+
+  var exList = getExercisesWithHistory().map(function(id){
+    var ex = findExercise(id);
+    return {id:id, name:(ex && ex.name) ? ex.name : id};
+  }).sort(function(a,b){ return a.name.localeCompare(b.name, 'it'); });
+  if (historyFilter.exerciseId && !exList.some(function(x){ return x.id === historyFilter.exerciseId; })) {
+    historyFilter.exerciseId = '';
+  }
+  eSel.innerHTML = '<option value="">Tutti gli esercizi</option>' + exList.map(function(x){
+    return '<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name)+'</option>';
+  }).join('');
+  eSel.value = historyFilter.exerciseId;
+
+  var fromEl = document.getElementById('hist-filter-from');
+  var toEl = document.getElementById('hist-filter-to');
+  var qEl = document.getElementById('hist-filter-search');
+  if (fromEl) fromEl.value = historyFilter.from;
+  if (toEl) toEl.value = historyFilter.to;
+  if (qEl && qEl.value !== historyFilter.q) qEl.value = historyFilter.q;
+}
+
+// Sessioni filtrate, dalla più recente alla più vecchia. Tiene l'indice
+// originale perché showSessionDetail/deleteSession lavorano su state.sessions.
+function getFilteredSessionRefs() {
+  var f = historyFilter;
+  var q = (f.q || '').trim().toLowerCase();
+  var refs = [];
+  (state.sessions || []).forEach(function(s, idx){
+    if (!s) return;
+    if (f.templateId && !sessionInTemplate(s, f.templateId)) return;
+
+    var exList = (s.exercises || []);
+    if (f.exerciseId) {
+      var hasEx = exList.some(function(e){
+        return e && (e.exerciseId === f.exerciseId || e.substitutedFor === f.exerciseId);
+      });
+      if (!hasEx) return;
+    }
+
+    var dk = histSessionDate(s);
+    if (f.from && (!dk || dk < f.from)) return;
+    if (f.to && (!dk || dk > f.to)) return;
+
+    if (q) {
+      var hit = String(s.name || '').toLowerCase().indexOf(q) !== -1;
+      if (!hit) {
+        hit = exList.some(function(e){
+          var ex = e && findExercise(e.exerciseId);
+          return !!(ex && String(ex.name).toLowerCase().indexOf(q) !== -1);
+        });
+      }
+      if (!hit) return;
+    }
+
+    refs.push({s:s, idx:idx});
+  });
+  refs.sort(function(a,b){
+    var da = new Date(a.s.date).getTime() || 0;
+    var db = new Date(b.s.date).getTime() || 0;
+    if (db !== da) return db - da;
+    return b.idx - a.idx;
+  });
+  return refs;
+}
+
+function renderHistoryList() {
+  var listEl = document.getElementById('history-list');
+  var moreEl = document.getElementById('history-more');
+  var countEl = document.getElementById('hist-filter-count');
+  if (!listEl) return;
+
+  var all = getFilteredSessionRefs();
+  var total = all.length;
+  if (countEl) countEl.textContent = total + (total === 1 ? ' sessione' : ' sessioni');
+
+  if (!state.sessions.length) {
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Nessuna sessione</div><div class="empty-desc">Completa il primo allenamento</div></div>';
+    if (moreEl) moreEl.innerHTML = '';
+    return;
+  }
+  if (!total) {
+    listEl.innerHTML = '<div class="empty-state" style="padding:28px 24px"><div class="empty-icon">🔍</div><div class="empty-title" style="font-size:20px">Nessun risultato</div><div class="empty-desc">Nessuna sessione corrisponde ai filtri.</div><button class="btn btn-secondary btn-sm" style="margin-top:14px" onclick="resetHistoryFilters()">Azzera filtri</button></div>';
+    if (moreEl) moreEl.innerHTML = '';
+    return;
+  }
+
+  var shown = all.slice(0, historyFilter.limit);
+  listEl.innerHTML = shown.map(function(ref){
+    var s = ref.s;
+    var date = new Date(s.date).toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
     var retroBadge = s.retro ? '<span style="background:rgba(30,144,255,0.2);color:#1e90ff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;border:1px solid rgba(30,144,255,0.4);margin-left:8px">RETRO</span>' : '';
-    return '<div class="history-item" onclick="showSessionDetail('+idx+')">'+
+    return '<div class="history-item" onclick="showSessionDetail('+ref.idx+')">'+
       '<div class="history-date">'+date+retroBadge+'</div><div class="history-name">'+escapeHtml(s.name)+'</div>'+
       '<div class="history-stats">'+
       '<div><div class="hs-val">'+(s.exercises?s.exercises.length:0)+'</div><div class="hs-lbl">esercizi</div></div>'+
       '<div><div class="hs-val">'+(s.totalSets||0)+'</div><div class="hs-lbl">serie</div></div>'+
-      '<div><div class="hs-val">'+((s.totalVolume||0)/1000).toFixed(1)+'t</div><div class="hs-lbl">volume</div></div>'+
+      '<div><div class="hs-val">'+(sessionEffectiveVolume(s)/1000).toFixed(1)+'t</div><div class="hs-lbl">volume</div></div>'+
       '<div><div class="hs-val">'+fmtDuration(s.duration||0)+'</div><div class="hs-lbl">durata</div></div>'+
       '</div></div>';
   }).join('');
+
+  if (moreEl) {
+    moreEl.innerHTML = total > shown.length
+      ? '<button class="btn btn-secondary btn-full" onclick="loadMoreHistory()">Carica altre ('+(total-shown.length)+' rimaste)</button>'
+      : '';
+  }
+}
+
+function onHistoryFilterChange() {
+  historyFilter.templateId = document.getElementById('hist-filter-template').value;
+  historyFilter.exerciseId = document.getElementById('hist-filter-exercise').value;
+  historyFilter.from = document.getElementById('hist-filter-from').value;
+  historyFilter.to = document.getElementById('hist-filter-to').value;
+  historyFilter.limit = HISTORY_PAGE;
+  renderHistoryList();
+}
+
+function onHistorySearchInput() {
+  if (_histSearchTimer) clearTimeout(_histSearchTimer);
+  _histSearchTimer = setTimeout(function(){
+    _histSearchTimer = null;
+    var el = document.getElementById('hist-filter-search');
+    historyFilter.q = el ? (el.value || '') : '';
+    historyFilter.limit = HISTORY_PAGE;
+    renderHistoryList();
+  }, 200);
+}
+
+function loadMoreHistory() {
+  historyFilter.limit += HISTORY_PAGE;
+  renderHistoryList();
+}
+
+function resetHistoryFilters() {
+  historyFilter = { templateId:'', exerciseId:'', from:'', to:'', q:'', limit: HISTORY_PAGE };
+  ['hist-filter-template','hist-filter-exercise','hist-filter-from','hist-filter-to','hist-filter-search'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  renderHistoryFilters();
+  renderHistoryList();
+}
+
+// Export CSV dello storico filtrato: una riga per serie, separatore ';'
+// (Excel in italiano), BOM UTF-8 e a capo CRLF.
+function _csvCell(v) {
+  var s = (v == null ? '' : String(v));
+  if (/[";\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function exportHistoryCsv() {
+  var refs = getFilteredSessionRefs();
+  if (!refs.length) { showToast('Nessuna sessione da esportare'); return; }
+
+  var rows = [[
+    'Data','Ora','Scheda','Sessione','Esercizio','Serie','Tipo','Peso (kg)',
+    'Carico effettivo (kg)','Ripetizioni','Distanza (m)','Durata (s)','Durata (min)','RPE','RIR','Tag','Note',
+    'Volume (kg)','Per lato','PR'
+  ]];
+  var pad = function(n){ return (n<10?'0':'')+n; };
+
+  // Dal più vecchio al più recente, che è l'ordine naturale di un foglio.
+  refs.slice().reverse().forEach(function(ref){
+    var s = ref.s;
+    var d = new Date(s.date);
+    var validDate = !isNaN(d.getTime());
+    var dateKey = histSessionDate(s);
+    var time = validDate ? pad(d.getHours())+':'+pad(d.getMinutes()) : '';
+    var tplName = sessionTemplateName(s);
+
+    (s.exercises || []).forEach(function(e){
+      var ex = findExercise(e.exerciseId);
+      var exName = (ex && ex.name) ? ex.name : (e.exerciseId || '');
+      var exType = getExerciseType(e.exerciseId);
+      (e.sets || []).forEach(function(st, i){
+        var isWork = st.type !== 'warmup';
+        var tags = (st.tags || []).map(function(t){
+          return SET_TAGS[t] ? SET_TAGS[t].label : t;
+        }).join(', ');
+        var vol = isWork
+          ? Math.round(setEffectiveVolume(e.exerciseId, st, e.perSide))
+          : '';
+        // Carico effettivo solo dove il corpo è il carico: altrove coincide
+        // con il peso già esportato e ripeterlo confonderebbe.
+        var effLoad = (isBodyweightLoadExercise(e.exerciseId) && (st.weight || isWork))
+          ? Math.round(effectiveSetLoad(e.exerciseId, st) * 100) / 100
+          : '';
+        var rir = (isWork && st.rpe !== '' && st.rpe != null) ? rpeToRir(st.rpe) : '';
+        rows.push([
+          dateKey,
+          time,
+          tplName,
+          s.name || '',
+          exName,
+          i+1,
+          isWork ? 'Lavoro' : 'Riscaldamento',
+          st.weight || '',
+          effLoad,
+          st.reps || '',
+          (exType === 'carry') ? (st.distance || '') : '',
+          (exType === 'timed') ? (st.duration || '') : '',
+          (exType === 'cardio') ? (st.duration || '') : '',
+          st.rpe || '',
+          rir === '' ? '' : rir,
+          tags,
+          st.note || '',
+          vol,
+          e.perSide ? 'sì' : '',
+          st.pr ? (st.pr.kind === '1rm' ? '1RM' : 'PR') : ''
+        ]);
+      });
+    });
+  });
+
+  var csv = '\ufeff' + rows.map(function(r){ return r.map(_csvCell).join(';'); }).join('\r\n');
+  var blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'ironlog-storico-' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('CSV esportato: ' + refs.length + (refs.length === 1 ? ' sessione' : ' sessioni'));
 }
 
 function getAllWeeksVolume() {
@@ -4905,7 +5427,7 @@ function getAllWeeksVolume() {
   while (cursor <= end) {
     var wStart = new Date(cursor);
     var wEnd = new Date(cursor); wEnd.setDate(wEnd.getDate()+7);
-    var vol = state.sessions.filter(function(s){var d=new Date(s.date);return d>=wStart&&d<wEnd;}).reduce(function(a,s){return a+(s.totalVolume||0);},0);
+    var vol = state.sessions.filter(function(s){var d=new Date(s.date);return d>=wStart&&d<wEnd;}).reduce(function(a,s){return a+sessionEffectiveVolume(s);},0);
     var d = new Date(cursor);
     labels.push(d.getDate()+'/'+(d.getMonth()+1));
     values.push(Math.round(vol));
@@ -4915,10 +5437,90 @@ function getAllWeeksVolume() {
   return {labels:labels, values:values};
 }
 
-function getMuscleDistribution() {
-  var dist={};
-  state.sessions.forEach(function(s){(s.exercises||[]).forEach(function(e){var ex=findExercise(e.exerciseId);if(ex)dist[ex.muscle]=(dist[ex.muscle]||0)+((e.sets?e.sets.length:0)*(e.perSide?2:1));});});
-  return dist;
+// Statistiche muscolari di una settimana (lun–dom). Conta le serie di lavoro
+// e separa "Corpo intero" e "Cardio" dai gruppi muscolari.
+function getWeekMuscleStats(weekStart) {
+  var end = new Date(weekStart);
+  end.setDate(end.getDate() + 7);
+  var groups = {}, whole = 0, cardio = 0, hasData = false;
+  (state.sessions || []).forEach(function(s){
+    var d = new Date(s && s.date);
+    if (isNaN(d.getTime()) || d < weekStart || d >= end) return;
+    hasData = true;
+    (s.exercises || []).forEach(function(e){
+      if (!e || !e.exerciseId) return;
+      var ex = findExercise(e.exerciseId);
+      var muscle = (ex && ex.muscle) ? ex.muscle : 'Altro';
+      var exType = getExerciseType(e.exerciseId);
+      var sides = e.perSide ? 2 : 1;
+      (e.sets || []).forEach(function(st){
+        if (!st || st.type === 'warmup') return;
+        if (exType === 'cardio' || muscle === 'Cardio') {
+          cardio += parseFloat(st.duration) || 0;
+        } else if (muscle === 'Corpo intero') {
+          whole += sides;
+        } else {
+          groups[muscle] = (groups[muscle] || 0) + sides;
+        }
+      });
+    });
+  });
+  return {groups:groups, whole:whole, cardio:cardio, hasData:hasData};
+}
+
+function muscleDeltaHtml(cur, prev, prevHasData) {
+  if (!prevHasData) return '';
+  var d = cur - prev;
+  if (d > 0) return ' <span class="muscle-delta-up">+'+d+'</span>';
+  if (d < 0) return ' <span class="muscle-delta-dn">'+d+'</span>';
+  return ' <span class="muscle-delta-0">=</span>';
+}
+
+function renderWeekMuscleDistribution() {
+  var el = document.getElementById('muscle-distribution');
+  if (!el) return;
+  var start = startOfWeek(new Date());
+  var cur = getWeekMuscleStats(start);
+  var prevStart = new Date(start);
+  prevStart.setDate(prevStart.getDate() - 7);
+  var prev = getWeekMuscleStats(prevStart);
+
+  var names = Object.keys(cur.groups).sort(function(a,b){ return cur.groups[b] - cur.groups[a]; });
+  if (!names.length && !cur.whole && !cur.cardio) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:13px">Nessuna serie questa settimana</div>';
+    return;
+  }
+
+  var maxSets = 20;
+  names.forEach(function(n){ if (cur.groups[n] > maxSets) maxSets = cur.groups[n]; });
+  if (cur.whole > maxSets) maxSets = cur.whole;
+  var bandL = 10 / maxSets * 100;
+  var bandW = 10 / maxSets * 100;
+
+  var html = '<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Serie di lavoro · fascia target 10–20 · Δ vs settimana precedente</div>';
+  html += names.map(function(name){
+    var sets = cur.groups[name];
+    var color = MUSCLE_COLORS[name] || 'var(--accent)';
+    var status = sets < 10 ? '<span style="color:var(--warm)">sotto 10</span>'
+      : sets > 20 ? '<span style="color:var(--red)">sopra 20</span>'
+      : '<span style="color:var(--green)">nel target</span>';
+    return '<div class="muscle-bar">'+
+      '<div class="muscle-bar-label"><span>'+escapeHtml(name)+'</span><span style="color:'+color+'">'+sets+' serie · '+status+muscleDeltaHtml(sets, prev.groups[name]||0, prev.hasData)+'</span></div>'+
+      '<div class="muscle-bar-track">'+
+        '<div class="muscle-bar-target" style="left:'+bandL+'%;width:'+bandW+'%"></div>'+
+        '<div class="muscle-bar-fill" style="width:'+Math.min(100, sets/maxSets*100)+'%;background:'+color+'"></div>'+
+      '</div></div>';
+  }).join('');
+
+  if (cur.whole || prev.whole) {
+    html += '<div class="muscle-special-title">A parte</div>'+
+      '<div class="muscle-special-row"><span>Corpo intero</span><span>'+cur.whole+' serie'+muscleDeltaHtml(cur.whole, prev.whole||0, prev.hasData)+'</span></div>';
+  }
+  if (cur.cardio || prev.cardio) {
+    html += (cur.whole || prev.whole ? '' : '<div class="muscle-special-title">A parte</div>')+
+      '<div class="muscle-special-row"><span>Cardio</span><span>'+Math.round(cur.cardio)+' min'+muscleDeltaHtml(Math.round(cur.cardio), Math.round(prev.cardio||0), prev.hasData)+'</span></div>';
+  }
+  el.innerHTML = html;
 }
 
 function showSessionDetail(idx) {
@@ -4936,7 +5538,7 @@ function showSessionDetail(idx) {
     '<div style="font-size:13px;color:var(--accent);margin-bottom:16px">'+date+'</div>'+
     '<div class="flex gap-8 mb-12" style="margin-bottom:12px">'+
     '<div class="stat-box"><div class="stat-box-val">'+fmtDuration(s.duration||0)+'</div><div class="stat-box-lbl">Durata</div></div>'+
-    '<div class="stat-box"><div class="stat-box-val">'+((s.totalVolume||0)/1000).toFixed(1)+'t</div><div class="stat-box-lbl">Volume</div></div>'+
+    '<div class="stat-box"><div class="stat-box-val">'+(sessionEffectiveVolume(s)/1000).toFixed(1)+'t</div><div class="stat-box-lbl">Volume</div></div>'+
     '<div class="stat-box"><div class="stat-box-val">'+(s.totalSets||0)+'</div><div class="stat-box-lbl">Serie</div></div></div>'+
     (s.exercises||[]).map(function(e){
       var ex=findExercise(e.exerciseId);if(!ex)return'';
@@ -4953,6 +5555,25 @@ function showSessionDetail(idx) {
       var incHtml = incParts.length
         ? '<div style="font-size:11px;margin-top:5px;padding:4px 8px;background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.2);border-radius:6px;color:var(--accent)">▲ Prog. applicata: '+incParts.join(', ')+'</div>'
         : '';
+      // Volume ricalcolato a runtime: per il corpo libero include il peso
+      // corporeo, senza riscrivere i totali salvati nelle sessioni.
+      var exVol = Math.round(exerciseEffectiveVolume(e));
+      var volHtml = exVol
+        ? ' <span style="color:var(--accent);font-size:13px">'+exVol+'kg vol.</span>'
+        : '';
+      var bwHtml = '';
+      if (isBodyweightLoadExercise(e.exerciseId)) {
+        var bw = latestBodyWeightKg();
+        var ballast = Math.max.apply(null, [0].concat((e.sets||[]).map(function(st){
+          return parseFloat(st && st.weight) || 0;
+        })));
+        if (bw) {
+          bwHtml = ' <span style="color:var(--text2);font-size:11px">corpo '+fmtWeight(bw)+'kg'+
+            (ballast > 0 ? ' + '+fmtWeight(ballast)+'kg zavorra' : '')+'</span>';
+        } else {
+          bwHtml = ' <span style="color:var(--warm);font-size:11px">peso corporeo non registrato</span>';
+        }
+      }
       // Sostituzione registrata in sessione: si vede al posto di cosa è stato fatto
       var subHtml = '';
       if (e.substitutedFor) {
@@ -4962,17 +5583,17 @@ function showSessionDetail(idx) {
       return '<div style="margin-bottom:16px">'+
         '<div class="font-bold" style="margin-bottom:4px">'+escapeHtml(ex.name)+subHtml+
           (e.perSide?' <span style="color:#1e90ff;font-size:11px;font-weight:600">×2 per lato</span>':'')+
-          (e.volume?' <span style="color:var(--accent);font-size:13px">'+e.volume+'kg vol.</span>':'')+'</div>'+
+          volHtml+bwHtml+'</div>'+
         (e.sets||[]).map(function(set,i){
           var line;
           if (isCarry) {
             var cw = set.weight ? set.weight+'kg × ' : '';
-            line = 'Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe:'');
+            line = 'Serie '+(i+1)+': '+cw+(set.distance||0)+'m'+(set.rpe?' · RPE '+set.rpe+' · '+rirText(set.rpe):'');
           } else if (isCardio) {
             line = 'Serie '+(i+1)+': '+(set.duration||0)+' min';
           } else {
             var load = set.weight ? set.weight+'kg × ' : '';
-            line = 'Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe:'');
+            line = 'Serie '+(i+1)+': '+load+(set.reps||0)+' rip'+(set.rpe?' · RPE '+set.rpe+' · '+rirText(set.rpe):'');
           }
           // Record e tag della serie
           if (set.pr) line += ' <span style="color:var(--accent);font-weight:700">'+(set.pr.kind==='1rm'?'💪 1RM':'🏆 PR')+'</span>';
@@ -5014,7 +5635,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.8.0';
+var APP_VERSION = '4.10.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
@@ -5120,24 +5741,33 @@ function renderPRDetail() {
   if(!id){el.innerHTML='';return;}
   var pr=prs[id];var ex=findExercise(id);
   if(!pr||!ex){el.innerHTML='';return;}
+  var bwLoad = isBodyweightLoadExercise(id);
   el.innerHTML=
     '<div class="flex justify-between items-center" style="padding:12px 0">'+
       '<div><div class="font-bold" style="font-size:16px">'+escapeHtml(ex.name)+'</div>'+
-      '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+escapeHtml(ex.muscle)+'</div></div>'+
+      '<div style="font-size:12px;color:var(--text2);margin-top:2px">'+escapeHtml(ex.muscle)+(bwLoad?' · carico con peso corporeo':'')+'</div></div>'+
       '<div style="text-align:right">'+
-        '<div style="font-size:32px;font-weight:900;color:var(--accent);line-height:1">'+pr.weight+'kg</div>'+
+        '<div style="font-size:32px;font-weight:900;color:var(--accent);line-height:1">'+fmtWeight(pr.weight)+'kg</div>'+
         '<div style="font-size:12px;color:var(--text2);margin-top:4px">'+pr.reps+' rip · 1RM ~'+pr.est1rm.toFixed(1)+'kg</div>'+
       '</div>'+
     '</div>';
 }
 
 function calcPRs() {
-  // Only loaded sets count: bodyweight / power / carry-distance sets carry no bar
+  // Carico effettivo: per il corpo libero conta il peso corporeo, così le
+  // trazioni hanno un PR anche senza zavorra. A pari carico vince chi fa più
+  // ripetizioni. Le serie di riscaldamento restano fuori.
   var prs={};
   state.sessions.forEach(function(s){(s.exercises||[]).forEach(function(e){(e.sets||[]).forEach(function(set){
-    var w = set.weight||0;
-    if (!w) return;
-    if(!prs[e.exerciseId]||w>prs[e.exerciseId].weight)prs[e.exerciseId]={weight:w,reps:set.reps||0,est1rm:w*(1+(set.reps||0)/30)};
+    if (!set || set.type === 'warmup') return;
+    var w = effectiveSetLoad(e.exerciseId, set);
+    var reps = set.reps||0;
+    if (!w || !reps) return;
+    var cur = prs[e.exerciseId];
+    if (!cur || w > cur.weight + 1e-9 ||
+        (Math.abs(w - cur.weight) < 1e-9 && reps > cur.reps)) {
+      prs[e.exerciseId] = {weight:w, reps:reps, est1rm:w*(1+reps/30)};
+    }
   });});});
   return prs;
 }
@@ -5571,9 +6201,12 @@ function renderRetroExerciseList() {
         '<span style="font-size:12px;color:var(--text3);min-width:20px">'+(si+1)+'</span>'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="kg" value="'+(s.weight||'')+'" oninput="updateRetroSet('+idx+','+si+',\'weight\',this.value)" min="0" step="0.5">'+
         '<input type="number" class="set-inp" style="flex:1" placeholder="'+(isCarry?'m':'rip')+'" value="'+(isCarry?(s.distance||0):s.reps)+'" oninput="updateRetroSet('+idx+','+si+',\''+(isCarry?'distance':'reps')+'\',this.value)"'+(isCarry?' min="0" step="5"':' min="1"')+'>'+
-        '<select class="set-rpe" style="flex:1" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
-          ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+(s.rpe===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
+        '<div class="set-rpe-wrap" style="flex:1">'+
+        '<select class="set-rpe" onchange="updateRetroSet('+idx+','+si+',\'rpe\',this.value)">'+
+          ['','6','6.5','7','7.5','8','8.5','9','9.5','10'].map(function(r){return '<option value="'+r+'"'+((s.rpe==null?'':String(s.rpe))===r?' selected':'')+'>'+( r||'RPE')+'</option>';}).join('')+
         '</select>'+
+        '<span class="set-rir" id="retro-rir-'+idx+'-'+si+'">'+rirText(s.rpe)+'</span>'+
+        '</div>'+
         '<button class="btn btn-xs btn-danger btn-icon" onclick="removeRetroSet('+idx+','+si+')">✕</button>'+
       '</div>';
     }).join('');
@@ -5657,7 +6290,7 @@ function renderRetroExerciseList() {
           ? '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">MIN</span><span style="width:34px"></span>'
           : '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">KG</span>'+
             '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">'+(isCarry?'M':'RIP')+'</span>'+
-            '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE</span>'+
+            '<span style="flex:1;font-size:10px;color:var(--text3);text-align:center">RPE/RIR</span>'+
             '<span style="width:34px"></span>')+
       '</div>'+
       setsHtml+
@@ -5802,6 +6435,10 @@ function removeRetroSet(exIdx, setIdx) {
 
 function updateRetroSet(exIdx, setIdx, field, val) {
   retroExercises[exIdx].sets[setIdx][field] = field==='rpe' ? val : parseFloat(val)||0;
+  if (field==='rpe') {
+    var rirEl = document.getElementById('retro-rir-'+exIdx+'-'+setIdx);
+    if (rirEl) rirEl.textContent = rirText(val);
+  }
 }
 
 function saveRetroSession() {
