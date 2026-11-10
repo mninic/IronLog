@@ -1097,10 +1097,13 @@ function sessionInTemplate(s, templateId) {
 var DELOAD_LOAD_PCT   = 0.7;   // -30% sul carico
 var DELOAD_SETS_PCT  = 0.5;   // -50% sulle serie
 var DELOAD_REST_PCT  = 1.25;  // +25% di recupero
-var DELOAD_RPE       = 9;     // RPE medio oltre il quale segnala fatica
-var DELOAD_STALL     = 3;     // sessioni ferme a tetto senza avanzamento
+// 7.7: il PDF prevede RIR 1-3, cioe' RPE 7-9. La soglia di fatica deve stare
+// sopra il limite alto del programma, non coincidere con esso.
+var DELOAD_RPE_HARD  = 9.5;   // RPE medio da cui scatta lo scarico
+var DELOAD_RPE_CONSOLIDATE = 8.5; // RPE medio da cui si consiglia di ripetere il carico
 var DELOAD_ABANDON_DAYS = 60; // oltre questo lasso l'esercizio e' abbandonato: silenzio
-var PROG_STALL_DAYS  = 14;    // giorni fermi prima di segnalare che manca la progressione
+var PROG_STALL_DAYS  = 14;    // giorni di pausa oltre i quali si propone il rientro
+var DELOAD_HINT_SNOOZE_DAYS = 7; // per quanto si puo' nascondere il segnale globale
 
 // Una riga di log per sessione in cui l'esercizio e' stato eseguito.
 // oldest -> newest
@@ -1108,35 +1111,61 @@ var PROG_STALL_DAYS  = 14;    // giorni fermi prima di segnalare che manca la pr
 // esercizio in due schede non condivide piu' storico, ultimo peso e consiglio.
 function exerciseLog(exId, templateId) {
   var out = [];
+  var isCarry = getExerciseType(exId) === 'carry';
+  var ladder = getRepProgression(exId);
+  var maxReps = ladder[ladder.length-1];
   (state.sessions||[]).forEach(function(s){
     if (templateId && !sessionInTemplate(s, templateId)) return;
     var entry = null;
     (s.exercises||[]).forEach(function(e){ if (e.exerciseId===exId) entry = e; });
     if (!entry || !(entry.sets||[]).length) return;
-    // I carry si misurano in METRI, tutto il resto in ripetizioni.
-    // unit vuoto = rip; 'm' = metri.
-    var isCarry = getExerciseType(exId) === 'carry';
-    var unit = isCarry ? 'm' : '';
-    var best = null, rpes = [], anyVal = false;
-    entry.sets.forEach(function(st){
+    // Serie di lavoro: il riscaldamento non conta per il tetto (7.6).
+    var work = entry.sets.filter(function(st){ return st.type !== 'warmup'; });
+    if (!work.length) work = entry.sets;
+    var sets = [];
+    work.forEach(function(st){
+      // I carry si misurano in METRI, tutto il resto in ripetizioni.
       var v = isCarry ? (st.distance||0) : (st.reps||0);
-      if (v>0) anyVal = true;
-      if (v>0 && (!best || v>best.val || (v===best.val && (st.weight||0)>best.weight))) {
-        best = {val:v, reps:st.reps||0, distance:st.distance||0, weight:st.weight||0, rpe:parseFloat(st.rpe)||null};
-      }
-      if (st.rpe!=null && st.rpe!=='') rpes.push(parseFloat(st.rpe));
+      if (v<=0) return; // isometrici/cardio: niente progressione
+      sets.push({
+        val:v, reps:st.reps||0, distance:st.distance||0,
+        weight:snapWeight(st.weight),
+        rpe:(st.rpe!=null && st.rpe!=='') ? parseFloat(st.rpe) : null
+      });
     });
-    if (!anyVal) return; // solo isometrici/cardio: niente progressione
+    if (!sets.length) return;
+
+    // Serie migliore (piu' ripetizioni, a parita' la piu' pesante): serve solo
+    // per l'etichetta "ultima volta".
+    var best = sets[0];
+    sets.forEach(function(x){ if (x.val>best.val || (x.val===best.val && x.weight>best.weight)) best = x; });
+
+    // 7.6: il tetto si riconosce su TUTTE le serie di lavoro, non sulla
+    // migliore. Contano le serie con lo stesso carico piu' alto; e' ammessa
+    // una sola serie diversa (back-off o ultima serie calata). Una piramide
+    // con due carichi diversi non e' "a tetto".
+    var maxW = Math.max.apply(null, sets.map(function(x){ return x.weight; }));
+    var top = sets.filter(function(x){ return Math.abs(x.weight-maxW) <= WEIGHT_STEP/2; });
+    var topAtMax = top.filter(function(x){ return x.val>=maxReps; }).length;
+    var misses = sets.length - topAtMax;
+    var atCeiling = topAtMax>=1 && misses<=1 && top.length>=sets.length-1;
+
+    var rpes = sets.map(function(x){ return x.rpe; }).filter(function(x){ return x!=null; });
     out.push({
       date:s.date,
-      val: best ? best.val : 0,
-      unit: unit,
-      reps: best ? best.reps : 0,
-      distance: best ? best.distance : 0,
-      weight: best ? best.weight : 0,
-      rpe: best ? best.rpe : null,
+      val: best.val,
+      unit: isCarry ? 'm' : '',
+      reps: best.reps,
+      distance: best.distance,
+      weight: best.weight,
+      topWeight: maxW,
+      rpe: best.rpe,
       avgRpe: rpes.length ? Math.round(rpes.reduce(function(a,b){return a+b;},0)/rpes.length*10)/10 : null,
-      sets: entry.sets.length
+      sets: work.length,
+      workSets: work.length,
+      atCeiling: atCeiling,
+      ceilSets: topAtMax,
+      misses: misses
     });
   });
   out.sort(function(a,b){ return a.date.localeCompare(b.date); });
@@ -1155,33 +1184,56 @@ function analyzeExerciseProgress(exId, templateId) {
   var log = exerciseLog(exId, templateId);
   if (!log.length) return null;
 
-  var loaded = log.some(function(r){ return r.weight>0; });
   var last = log[log.length-1];
   var prev = log.length>1 ? log[log.length-2] : null;
   var lastDate = new Date(last.date).getTime();
+  var daysSince = Math.round((Date.now()-lastDate)/86400000);
 
-  // Sessioni "a tetto": tutte le serie al massimo della progressione
-  // (ripetizioni, o metri per i carry)
-  var atCeilingLog = log.filter(function(r){ return r.val>=maxReps; });
-  var firstCeil = atCeilingLog.length ? atCeilingLog[0] : null;
+  // 7.6: si guardano solo le sessioni dall'ultimo cambio di carico. Prima
+  // l'RPE medio e il "carico salito" si calcolavano su tutta la storia, quindi
+  // dopo il primo ciclo il confronto era sempre favorevole.
+  var cycleStart = 0;
+  for (var ci=log.length-1; ci>0; ci--) {
+    if (log[ci].weight !== log[ci-1].weight) { cycleStart = ci; break; }
+  }
+  var cycleLog = log.slice(cycleStart);
 
-  // Quante sessioni consecutive (dalla piu' recente) sono ferme a tetto
-  // con lo stesso carico e senza aumentare il valore di progressione
+  // Sessioni "a tetto": lo dice exerciseLog, serie per serie.
+  var cycleCeil = cycleLog.filter(function(r){ return r.atCeiling; });
+
+  // Sessioni consecutive (dalla piu' recente) ferme a tetto con lo stesso carico
   var streak = 0;
   for (var i=log.length-1; i>=0; i--) {
-    if (log[i].val>=maxReps && log[i].weight===last.weight) streak++;
+    if (log[i].atCeiling && log[i].weight===last.weight) streak++;
     else break;
   }
 
-  // Carico salito rispetto alla prima volta che il tetto e' stato toccato?
-  var loadSteppedUp = !!(firstCeil && loaded && last.weight>firstCeil.weight);
-  var repsGrew = !!(prev && last.val>prev.val);
-  var daysSince = Math.round((Date.now()-lastDate)/86400000);
-  var avgRpeCeil = (function(){
-    var v = atCeilingLog.map(function(r){return r.avgRpe;}).filter(function(x){return x!=null;});
+  // 7.8: stallo = prestazione ferma, non giorni trascorsi.
+  var stallCount = 1;
+  for (var si=log.length-1; si>0; si--) {
+    if (log[si].weight===log[si-1].weight && log[si].val===log[si-1].val) stallCount++;
+    else break;
+  }
+
+  // 7.7: calo di prestazione = ripetizioni sotto la sessione precedente
+  // allo stesso carico, per due sessioni di fila.
+  var dropCount = 0;
+  for (var di=log.length-1; di>0; di--) {
+    if (log[di].weight===log[di-1].weight && log[di].val<log[di-1].val) dropCount++;
+    else break;
+  }
+
+  var avgRpeCycle = (function(){
+    var v = cycleCeil.map(function(r){return r.avgRpe;}).filter(function(x){return x!=null;});
     if (!v.length) return null;
     return Math.round(v.reduce(function(a,b){return a+b;},0)/v.length*10)/10;
   })();
+
+  // Il carico è previsto dalla scheda? Serve a distinguere "aggiungi zavorra"
+  // da "aumenta il carico" per il corpo libero (7.9).
+  var te = findTemplateExercise(exId, templateId);
+  var canLoad = cfgAllowsWeight((te && te.cfg) || {exerciseId:exId});
+  var loaded = canLoad && log.some(function(r){ return r.weight>0; });
 
   var r = {
     exerciseId: exId,
@@ -1197,35 +1249,46 @@ function analyzeExerciseProgress(exId, templateId) {
     log: log,
     sessions: log.length,
     loaded: loaded,
+    canLoad: canLoad,
     last: last,
     daysSince: daysSince,
-    atCeiling: last.val>=maxReps,
-    loadSteppedUp: loadSteppedUp,
-    repsGrew: repsGrew,
+    atCeiling: !!last.atCeiling,
+    repsGrew: !!(prev && last.val>prev.val),
     streak: streak,
-    avgRpeCeil: avgRpeCeil
+    stallCount: stallCount,
+    dropCount: dropCount,
+    avgRpeCycle: avgRpeCycle
   };
 
   r.action = decideProgressionAction(r);
   return r;
 }
 
-// 'progress' | 'deload' | null
+// 'progress' | 'consolidate' | 'deload' | 'reentry' | 'variant' | null
+// 7.7 tiene separati promemoria di progressione e deload; 7.8 distingue la
+// pausa (rientro) dallo stallo vero (prestazione ferma).
 function decideProgressionAction(r) {
-  if (r.daysSince >= DELOAD_ABANDON_DAYS) return null;      // scheda abbandonata: niente rumore
-  var stale = r.daysSince >= PROG_STALL_DAYS;               // fermo da due settimane o piu'
-  if (r.fixed){
-    // Progressione fissa (es. Broad jump 3x3): contano solo carico e qualita'
-    return stale && r.sessions>=2 ? 'progress' : null;
+  if (r.daysSince >= DELOAD_ABANDON_DAYS) return null; // scheda abbandonata: niente rumore
+  if (r.daysSince >= PROG_STALL_DAYS) return 'reentry'; // dopo una pausa non si "aumenta"
+  // 7.7: calo di prestazione a pari carico per due sessioni = fatica, a
+  // prescindere dal tetto.
+  if (r.dropCount>=2) return 'deload';
+  if (r.fixed) {
+    // Progressione fissa (es. Broad jump 3x3): solo il carico ha senso.
+    return (r.loaded && r.atCeiling) ? 'progress' : null;
   }
-  if (!r.atCeiling) {
-    // Non ancora a tetto: segnala solo se e' fermo da troppo tempo
-    return stale && r.sessions>=2 ? 'progress' : null;
+  if (r.atCeiling) {
+    // Fatica solo con RPE davvero alto o prestazione in calo.
+    if (r.avgRpeCycle!=null && r.avgRpeCycle>=DELOAD_RPE_HARD) return 'deload';
+    // RPE 8,5-9: il programma prevede RIR 1-3, quindi si consolida.
+    if (r.avgRpeCycle!=null && r.avgRpeCycle>=DELOAD_RPE_CONSOLIDATE) return 'consolidate';
+    // Corpo libero senza carico: non si può "aggiungere ripetizioni" per
+    // sempre, serve zavorra o una variante (7.9).
+    if (!r.canLoad) return 'variant';
+    return 'progress';
   }
-  // A tetto ripetizioni: ora si decide deload vs incremento
-  var hard = r.avgRpeCeil!=null && r.avgRpeCeil>=DELOAD_RPE;
-  if (hard || r.streak>=DELOAD_STALL || (r.loaded && !r.loadSteppedUp && r.streak>=2)) return 'deload';
-  return 'progress';
+  // Non a tetto: stallo solo se la prestazione è ferma da 3+ sessioni.
+  return r.stallCount>=3 ? 'consolidate' : null;
 }
 
 // Config dell'esercizio dentro un template (o null se non e' in nessun template).
@@ -1256,7 +1319,8 @@ function currentPrescription(exId, templateId) {
 
 // Passo di progressione: +carico, si riparte dal minimo della progressione.
 // Il salto resta sempre multiplo di 0,5 kg (vedi WEIGHT_STEP).
-// I carry aggiungono anche il passo in metri.
+// I carry aggiungono anche il passo in metri; a tetto ripartono dal minimo
+// della scala, altrimenti il peso sale e la distanza resta al massimo (7.9).
 function progressionPrescription(exId, templateId) {
   var p = currentPrescription(exId, templateId);
   var ladder = getRepProgression(exId);
@@ -1266,9 +1330,16 @@ function progressionPrescription(exId, templateId) {
   var autoInc = snapWeight(p.weight>=100 ? 2.5 : 1);
   var step = manualInc>0 ? manualInc : autoInc;
   var distStep = (p.cfg && p.cfg.increments && p.cfg.increments.distance) || CARRY_DEFAULT_DIST_STEP;
-  var targetDist = snapToProgression(p.reps + distStep, ladder);
-  var loadLabel = loaded ? '+'+fmtWeight(step)+'kg' : '+'+ladder[0]+' rip';
-  if (isCarry) loadLabel = (loaded ? '+'+fmtWeight(step)+'kg · ' : '')+'+'+distStep+'m';
+  var atCeiling = p.reps >= ladder[ladder.length-1];
+  var targetDist = atCeiling ? ladder[0] : snapToProgression(p.reps + distStep, ladder);
+  var loadLabel;
+  if (isCarry) {
+    loadLabel = (loaded ? '+'+fmtWeight(step)+'kg · ' : '') + (atCeiling ? 'riparte da '+targetDist+'m' : '+'+distStep+'m');
+  } else if (loaded) {
+    loadLabel = '+'+fmtWeight(step)+'kg';
+  } else {
+    loadLabel = 'a corpo libero';
+  }
   return {
     weight: loaded ? snapWeight(p.weight+step) : 0,
     distance: isCarry ? targetDist : 0,
@@ -1277,8 +1348,47 @@ function progressionPrescription(exId, templateId) {
     rest: p.rest,
     step: step,
     distStep: distStep,
+    atCeiling: atCeiling,
     loaded: loaded,
     loadLabel: loadLabel
+  };
+}
+
+// 7.7: RPE 8,5-9 a tetto = ripeti lo stesso carico. Non si sale e non si
+// scarica: si consolida la tecnica e si chiude la progressione pulita.
+function consolidatePrescription(exId, templateId) {
+  var p = currentPrescription(exId, templateId);
+  var ladder = getRepProgression(exId);
+  var isCarry = getExerciseType(exId)==='carry';
+  var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
+  return {
+    weight: loaded ? snapWeight(p.weight) : 0,
+    distance: isCarry ? p.reps : 0,
+    sets: p.sets || 3,
+    reps: isCarry ? p.reps : (p.cfg ? (p.cfg.reps||ladder[0]) : ladder[0]),
+    rest: p.rest,
+    loaded: loaded,
+    loadLabel: 'stesso carico'
+  };
+}
+
+// 7.8: dopo una pausa si rientra. Fino a un mese si riparte dallo stesso
+// carico, oltre si toglie il 10%: l'obiettivo è riprendere, non progredire.
+function reentryPrescription(exId, templateId, daysSince) {
+  var p = currentPrescription(exId, templateId);
+  var isCarry = getExerciseType(exId)==='carry';
+  var loaded = cfgAllowsWeight(p.cfg||{exerciseId:exId});
+  var dropPct = (daysSince||0)>=30 ? 10 : 0;
+  var weight = loaded ? snapWeight(p.weight*(1-dropPct/100)) : 0;
+  return {
+    weight: weight,
+    distance: isCarry ? p.reps : 0,
+    sets: p.sets || 3,
+    reps: isCarry ? p.reps : (p.cfg ? (p.cfg.reps||getRepProgression(exId)[0]) : getRepProgression(exId)[0]),
+    rest: p.rest,
+    dropPct: dropPct,
+    loaded: loaded,
+    loadLabel: loaded ? (dropPct ? '-'+dropPct+'% carico' : 'stesso carico') : 'a corpo libero'
   };
 }
 
@@ -1303,6 +1413,56 @@ function deloadPrescription(exId, templateId) {
   };
 }
 
+// Scrive i valori del consiglio nel template e registra la sessione vista.
+function markAdvice(cfg, exId, templateId) {
+  var log = exerciseLog(exId, templateId);
+  cfg.advice = {
+    at: new Date().toISOString(),
+    lastSessionAt: log.length ? (log[log.length-1].date || '') : ''
+  };
+}
+
+// 7.7: prima di scaricare si salvano i valori pieni nel template. Servono a
+// proporre "Ripristina carico pieno" dopo una sessione di scarico.
+function savePreDeload(cfg) {
+  if (cfg.preDeload) return;
+  cfg.preDeload = {
+    weight: cfg.weight||0,
+    sets: cfg.sets||0,
+    reps: cfg.reps||0,
+    distance: cfg.distance||0,
+    rest: cfg.rest||0,
+    notes: cfg.notes||''
+  };
+}
+
+function applyDeloadToCfg(cfg, exId, templateId) {
+  var presc = deloadPrescription(exId, templateId);
+  savePreDeload(cfg);
+  var isCarry = getExerciseType(exId)==='carry';
+  var unit = isCarry ? 'm' : ' rip';
+  cfg.sets = presc.sets;
+  if (isCarry && cfg.distance !== undefined) cfg.distance = presc.distance;
+  else if (!isCarry && cfg.reps !== undefined) cfg.reps = presc.reps;
+  if (cfgAllowsWeight(cfg) && cfg.weight !== undefined) cfg.weight = presc.weight;
+  if (presc.rest && cfg.rest !== undefined) cfg.rest = presc.rest;
+  cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'×'+presc.reps+unit+'. Tieni RPE 6-7, poi torna al carico pieno.';
+  markAdvice(cfg, exId, templateId);
+}
+
+function restorePreDeload(cfg) {
+  var pre = cfg.preDeload;
+  if (!pre) return false;
+  if (pre.weight !== undefined) cfg.weight = pre.weight;
+  if (pre.sets !== undefined) cfg.sets = pre.sets;
+  if (pre.reps !== undefined) cfg.reps = pre.reps;
+  if (pre.distance !== undefined) cfg.distance = pre.distance;
+  if (pre.rest !== undefined) cfg.rest = pre.rest;
+  cfg.notes = pre.notes || '';
+  delete cfg.preDeload;
+  return true;
+}
+
 // Applica il consiglio al template che contiene l'esercizio.
 // Salva anche un marcatore (7.2): data del consiglio e ultima sessione vista.
 // Finché non arriva una nuova sessione dello stesso esercizio nella stessa
@@ -1315,17 +1475,48 @@ function applyProgressionAdvice(exId, action, templateId) {
   // ma il template puo' essere stato cancellato nel frattempo
   if (!p.found) { showToast('Esercizio non presente nel template'); return; }
 
-  var isDeload = (action==='deload');
-  var presc = isDeload ? deloadPrescription(exId, templateId) : progressionPrescription(exId, templateId);
   var cfg = p.found.cfg;
   // Doppio tocco o consiglio già applicato: non sommare un altro passo (7.2).
-  if (adviceBlocked(cfg, exId, templateId)) {
+  if (action!=='restore' && adviceBlocked(cfg, exId, templateId)) {
     showToast('Consiglio già applicato: registra una nuova sessione');
     return;
   }
   var isCarry = getExerciseType(exId)==='carry';
   var unit = isCarry ? 'm' : ' rip';
   var tplName = p.found.template ? p.found.template.name : '';
+
+  if (action==='restore') {
+    if (!restorePreDeload(cfg)) { showToast('Nessuno scarico da annullare'); return; }
+    markAdvice(cfg, exId, templateId);
+    saveState();
+    renderTemplates(); renderHome(); renderProgressionAdvisor();
+    showToast('Carico pieno ripristinato: '+r.name);
+    return;
+  }
+
+  if (action==='variant') {
+    // 7.9: corpo libero a tetto. Non si aggiungono ripetizioni all'infinito:
+    // si indica zavorra, variante più difficile o tetto esteso.
+    cfg.notes = 'A tetto a corpo libero — aggiungi zavorra, passa a una variante più difficile o estendi il tetto ('+r.ladder.join('–')+'+).';
+    markAdvice(cfg, exId, templateId);
+    saveState();
+    renderTemplates(); renderHome(); renderProgressionAdvisor();
+    showToast('Difficoltà: '+r.name);
+    return;
+  }
+
+  if (action==='deload') {
+    applyDeloadToCfg(cfg, exId, templateId);
+    saveState();
+    renderTemplates(); renderHome(); renderProgressionAdvisor();
+    showToast('Deload su "'+tplName+'": '+r.name);
+    return;
+  }
+
+  var presc;
+  if (action==='consolidate') presc = consolidatePrescription(exId, templateId);
+  else if (action==='reentry') presc = reentryPrescription(exId, templateId, r.daysSince);
+  else presc = progressionPrescription(exId, templateId);
 
   cfg.sets = presc.sets;
   // sui carry la progressione e' in METRI: si aggiorna la distanza, non le reps
@@ -1334,22 +1525,24 @@ function applyProgressionAdvice(exId, action, templateId) {
   if (cfgAllowsWeight(cfg) && cfg.weight !== undefined) cfg.weight = presc.weight;
   if (presc.rest && cfg.rest !== undefined) cfg.rest = presc.rest;
 
-  if (isDeload) {
-    cfg.notes = 'SCARICO — '+presc.loadLabel+', '+presc.sets+'×'+presc.reps+unit+'. Tieni RPE 6-7, poi torna al carico pieno.';
-    showToast('Deload su "'+tplName+'": '+r.name);
+  if (action==='consolidate') {
+    cfg.notes = 'CONSOLIDA — stesso carico, '+presc.sets+'×'+presc.reps+unit+'. Chiudi tutte le serie pulite prima di salire.';
+    showToast('Consolida "'+tplName+'": '+r.name);
+  } else if (action==='reentry') {
+    cfg.notes = 'RIENTRO — '+presc.loadLabel+'. Riparti gradualmente e torna al carico pieno tra 1-2 sessioni.';
+    showToast('Rientro "'+tplName+'": '+r.name);
+  } else if (r.fixed) {
+    // 7.9: progressione fissa, conta solo il carico.
+    cfg.notes = 'Progressione — '+presc.loadLabel+'. Ripetizioni invariate ('+r.maxReps+'), cura la qualità.';
+    showToast('Progressione su "'+tplName+'": '+r.name+' '+presc.loadLabel);
   } else {
-    // per i carry si parte dai metri nuovi, non si riparte dal minimo della ladder
+    // per i carry a tetto si riparte dal minimo della scala
     var nextVal = isCarry ? presc.distance : presc.reps;
     cfg.notes = 'Progressione — '+presc.loadLabel+', riparte da '+nextVal+unit+'. Tieni RPE 8 e fermati se la tecnica peggiora.';
     showToast('Progressione su "'+tplName+'": '+r.name+' '+presc.loadLabel);
   }
 
-  var log = exerciseLog(exId, templateId);
-  cfg.advice = {
-    at: new Date().toISOString(),
-    lastSessionAt: log.length ? (log[log.length-1].date || '') : ''
-  };
-
+  markAdvice(cfg, exId, templateId);
   saveState();
   renderTemplates();
   renderHome();
@@ -1382,6 +1575,25 @@ function getProgressionAdvice() {
       var key = e.id || e.exerciseId;
       if (seen[key]) return;
       seen[key] = true;
+
+      // 7.7: scarico in corso. Finché non arriva una sessione fatta dopo il
+      // deload non si propone altro; poi si propone il ripristino del carico.
+      if (e.preDeload) {
+        var dlog = exerciseLog(e.exerciseId, t.id);
+        var appliedAt = e.advice && e.advice.at ? e.advice.at : '';
+        var done = !!(dlog.length && appliedAt && dlog[dlog.length-1].date >= appliedAt);
+        if (!done) return;
+        var rr = analyzeExerciseProgress(e.exerciseId, t.id);
+        if (!rr) return;
+        rr.action = 'restore';
+        rr.preDeload = e.preDeload;
+        rr.templateId = t.id;
+        rr.templateIdx = findTemplateIndexById(t.id);
+        rr.templateName = t.name || '';
+        out.push(rr);
+        return;
+      }
+
       // Consiglio già applicato: resta nascosto finché non c'è una nuova
       // sessione per questo esercizio in questa scheda (7.2).
       if (adviceBlocked(e, e.exerciseId, t.id)) return;
@@ -1393,8 +1605,11 @@ function getProgressionAdvice() {
       out.push(r);
     });
   });
+  var order = {deload:0, restore:1, reentry:2, variant:3, consolidate:4, progress:5};
   out.sort(function(a,b){
-    if (a.action!==b.action) return a.action==='deload' ? -1 : 1;
+    var oa = order[a.action]!=null ? order[a.action] : 9;
+    var ob = order[b.action]!=null ? order[b.action] : 9;
+    if (oa!==ob) return oa-ob;
     if (b.daysSince !== a.daysSince) return b.daysSince - a.daysSince;
     if (a.name !== b.name) return a.name.localeCompare(b.name);
     return String(a.templateName||'').localeCompare(String(b.templateName||''));
@@ -1402,8 +1617,16 @@ function getProgressionAdvice() {
   return out;
 }
 
+function deloadHintSnoozed() {
+  var p = state.profile || {};
+  var at = p.deloadHintSnoozedAt ? new Date(p.deloadHintSnoozedAt).getTime() : 0;
+  return !!at && (Date.now()-at) < DELOAD_HINT_SNOOZE_DAYS*86400000;
+}
+
 function deloadSessionHint() {
-  // Segnale di scarico globale: troppe sessioni ravvicinate con RPE alto
+  // 7.7: il segnale di scarico è sistemico. Resta un promemoria separato dai
+  // consigli per singolo esercizio, ma ora si può chiudere o applicare.
+  if (deloadHintSnoozed()) return null;
   var last14 = (state.sessions||[]).filter(function(s){
     return (Date.now()-new Date(s.date).getTime())<14*86400000;
   });
@@ -1415,6 +1638,38 @@ function deloadSessionHint() {
   },0);
   if (hard<3) return null;
   return {sessions:last14.length, hardSets:hard};
+}
+
+function snoozeDeloadHint() {
+  if (!state.profile) state.profile = {name:'Atleta',unit:'kg'};
+  state.profile.deloadHintSnoozedAt = new Date().toISOString();
+  saveState();
+  renderProgressionAdvisor();
+  showToast('Segnale nascosto per '+DELOAD_HINT_SNOOZE_DAYS+' giorni');
+}
+
+// Applica lo scarico a tutte le schede con storico recente. I valori pieni
+// restano salvati in ogni esercizio (preDeload) per poterli ripristinare.
+function applyGlobalDeload() {
+  if (!confirm('Applicare lo scarico a tutti gli esercizi allenati negli ultimi 30 giorni?')) return;
+  var n = 0;
+  (state.templates || []).forEach(function(t){
+    (t.exercises||[]).forEach(function(cfg){
+      if (!cfg || !cfg.exerciseId || cfg.preDeload) return;
+      var log = exerciseLog(cfg.exerciseId, t.id);
+      if (!log.length) return;
+      var days = Math.round((Date.now()-new Date(log[log.length-1].date).getTime())/86400000);
+      if (days > 30) return;
+      applyDeloadToCfg(cfg, cfg.exerciseId, t.id);
+      n++;
+    });
+  });
+  if (!n) { showToast('Nessun esercizio recente da scaricare'); return; }
+  if (!state.profile) state.profile = {name:'Atleta',unit:'kg'};
+  state.profile.deloadHintSnoozedAt = new Date().toISOString();
+  saveState();
+  renderTemplates(); renderHome(); renderProgressionAdvisor();
+  showToast('Scarico applicato a '+n+' esercizi');
 }
 
 function renderProgressionAdvisor() {
@@ -1434,32 +1689,79 @@ function renderProgressionAdvisor() {
   if (hint){
     html += '<div style="background:rgba(232,255,71,0.07);border:1px solid var(--accent);border-radius:var(--radius);padding:12px;margin-bottom:10px">'+
       '<div style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:4px">⚠ Segnale di affaticamento</div>'+
-      '<div style="font-size:13px;color:var(--text2);line-height:1.45">'+hint.sessions+' sessioni negli ultimi 14 giorni con '+hint.hardSets+' serie a RPE 9.5+. Programma 3-4 giorni di scarico (60-70% del carico, -50% serie, RPE 6-7).</div></div>';
+      '<div style="font-size:13px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+hint.sessions+' sessioni negli ultimi 14 giorni con '+hint.hardSets+' serie a RPE 9.5+. Programma 3-4 giorni di scarico (60-70% del carico, -50% serie, RPE 6-7).</div>'+
+      '<div class="flex gap-8">'+
+        '<button class="btn btn-xs" style="background:var(--accent);color:#000;border:none;flex:1" onclick="applyGlobalDeload()">Scarica tutte le schede</button>'+
+        '<button class="btn btn-xs btn-secondary" onclick="snoozeDeloadHint()">Nascondi '+DELOAD_HINT_SNOOZE_DAYS+' giorni</button>'+
+      '</div></div>';
   }
 
+  var META = {
+    deload:     {color:'var(--green)', tag:'DELOAD',     btn:'🔄 Applica deload'},
+    restore:    {color:'var(--accent)', tag:'RIPRISTINA', btn:'↩ Ripristina carico'},
+    reentry:    {color:'#ff9f43',       tag:'RIENTRO',    btn:'↩ Riparti'},
+    variant:    {color:'#a855f7',       tag:'VARIANTE',   btn:'＋ Aggiungi difficoltà'},
+    consolidate:{color:'#1e90ff',       tag:'CONSOLIDA',  btn:'✓ Ripeti lo stesso carico'},
+    progress:   {color:'var(--accent)', tag:'PROGRESSI',  btn:'⬆ Applica progressione'}
+  };
+
   list.forEach(function(r){
-    var isDeload = r.action==='deload';
-    var presc = isDeload ? deloadPrescription(r.exerciseId, r.templateId) : progressionPrescription(r.exerciseId, r.templateId);
-    var color = isDeload ? 'var(--green)' : 'var(--accent)';
-    var tag = isDeload ? 'DELOAD' : 'PROGRESSI';
-    var title = isDeload ? 'Tetto raggiunto, scarica' : 'Aumenta il carico';
-    // I carry parlano in metri, il resto in ripetizioni
+    var meta = META[r.action] || META.progress;
+    var color = meta.color;
     var unit = (r.type==='carry') ? 'm' : ' rip';
-    var curVal = r.last.val;
-    var nextVal = isDeload ? presc.reps : ((r.type==='carry') ? presc.distance : presc.reps);
-    var body = isDeload
-      ? 'Sei fermo a <b>'+curVal+unit+' × '+r.last.weight+'kg</b> da '+r.streak+' sessioni. Prossima settimana: <b>'+presc.sets+'×'+nextVal+unit+(presc.loaded?' @ '+presc.weight+'kg':'')+'</b> ('+presc.loadLabel+').'
-      : 'Ultima serie <b>'+curVal+unit+(r.loaded?' @ '+r.last.weight+'kg':'')+'</b>. Prossimo passo: <b>'+presc.loadLabel+'</b>, riparte da '+nextVal+unit+'.';
+    var curVal = r.last ? r.last.val : 0;
+    var lastW = r.last && r.last.weight ? fmtWeight(r.last.weight)+'kg' : '';
+    var body = '';
+
+    if (r.action==='restore') {
+      var pre = r.preDeload || {};
+      body = 'Scarico completato. Ripristina il carico pieno: <b>'+(pre.weight?fmtWeight(pre.weight)+'kg × ':'')+(pre.sets||0)+'×'+(pre.reps||0)+unit+'</b>.';
+    } else if (r.action==='deload') {
+      var presc = deloadPrescription(r.exerciseId, r.templateId);
+      var nextVal = presc.reps;
+      var reason;
+      if (r.dropCount>=2 && !(r.avgRpeCycle!=null && r.avgRpeCycle>=DELOAD_RPE_HARD)) {
+        reason = 'Prestazione in calo a pari carico per 2 sessioni.';
+      } else if (r.avgRpeCycle!=null) {
+        reason = 'RPE medio <b>'+r.avgRpeCycle+'</b> nelle sessioni a tetto.';
+        if (r.streak>1) reason += ' Stesso carico da '+r.streak+' sessioni.';
+      } else {
+        reason = 'Tetto raggiunto'+(r.streak>1?' da '+r.streak+' sessioni':'')+'.';
+      }
+      body = reason+' Prossima settimana: <b>'+presc.sets+'×'+nextVal+unit+(presc.loaded?' @ '+presc.weight+'kg':'')+'</b> ('+presc.loadLabel+').';
+    } else if (r.action==='consolidate') {
+      var cpresc = consolidatePrescription(r.exerciseId, r.templateId);
+      if (r.atCeiling) {
+        body = 'RPE <b>'+(r.avgRpeCycle!=null?r.avgRpeCycle:'alto')+'</b> a tetto: il carico è già impegnativo. Ripeti <b>'+(cpresc.loaded?cpresc.weight+'kg × ':'')+cpresc.reps+unit+'</b> e chiudi pulito prima di salire.';
+      } else {
+        body = 'Stesso carico e stesse ripetizioni da <b>'+r.stallCount+' sessioni</b>. Ripeti '+(cpresc.loaded?'<b>'+cpresc.weight+'kg</b>':'lo stesso lavoro')+' e prova a chiudere una rip in più.';
+      }
+    } else if (r.action==='reentry') {
+      var rpresc = reentryPrescription(r.exerciseId, r.templateId, r.daysSince);
+      body = 'Ultima sessione <b>'+r.daysSince+' giorni fa</b>. Riparti da <b>'+(rpresc.loaded?rpresc.weight+'kg':'corpo libero')+'</b> ('+rpresc.loadLabel+') per 1-2 sessioni, poi riprendi la progressione.';
+    } else if (r.action==='variant') {
+      body = 'A tetto a corpo libero (<b>'+curVal+unit+'</b>). Aggiungi zavorra, passa a una variante più difficile o estendi il tetto (<b>'+r.ladder.join('–')+'+</b>).';
+    } else {
+      var ppresc = progressionPrescription(r.exerciseId, r.templateId);
+      var pnext = (r.type==='carry') ? ppresc.distance : ppresc.reps;
+      if (r.fixed) {
+        body = 'Prossimo passo: <b>'+ppresc.loadLabel+'</b>. Ripetizioni invariate ('+r.maxReps+'), cura la qualità.';
+      } else if (r.type==='carry') {
+        body = 'Ultima: <b>'+curVal+'m'+(lastW?' @ '+lastW:'')+'</b>. Prossimo passo: <b>'+ppresc.loadLabel+'</b>.';
+      } else {
+        body = 'Ultima serie <b>'+curVal+unit+(r.loaded?' @ '+lastW:'')+'</b>. Prossimo passo: <b>'+ppresc.loadLabel+'</b>, riparte da '+pnext+unit+'.';
+      }
+    }
 
     html += '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">'+
       '<div class="flex justify-between items-center" style="margin-bottom:5px">'+
         '<div style="font-size:14px;font-weight:700;color:var(--text)">'+escapeHtml(r.icon||'')+' '+escapeHtml(r.name)+
           (r.templateName?'<div style="font-size:10px;font-weight:600;color:var(--text3);margin-top:2px">scheda: '+escapeHtml(r.templateName)+'</div>':'')+'</div>'+
-        '<div style="font-size:10px;font-weight:800;letter-spacing:0.5px;padding:2px 7px;border-radius:20px;background:'+color+';color:#000">'+tag+'</div>'+
+        '<div style="font-size:10px;font-weight:800;letter-spacing:0.5px;padding:2px 7px;border-radius:20px;background:'+color+';color:#000">'+meta.tag+'</div>'+
       '</div>'+
       '<div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px">'+body+'</div>'+
       '<div class="flex gap-8">'+
-        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\',\''+r.templateId+'\')">'+(isDeload?'🔄 Applica deload':'⬆ Applica progressione')+'</button>'+
+        '<button class="btn btn-xs" style="background:'+color+';color:#000;border:none;flex:1" onclick="applyProgressionAdvice(\''+r.exerciseId+'\',\''+r.action+'\',\''+r.templateId+'\')">'+meta.btn+'</button>'+
         '<button class="btn btn-xs btn-secondary" onclick="showPage(\'template\')">Apri scheda</button>'+
       '</div></div>';
   });
@@ -3317,6 +3619,7 @@ function saveExerciseConfig() {
       var prevCfg = editingTemplateExercises[configExerciseIdx];
       if (prevCfg && prevCfg.id) cfg.id = prevCfg.id;
       if (prevCfg && prevCfg.advice) cfg.advice = prevCfg.advice;
+      if (prevCfg && prevCfg.preDeload) cfg.preDeload = prevCfg.preDeload;
       editingTemplateExercises[configExerciseIdx]=cfg;
     }
     else editingTemplateExercises.push(cfg);
@@ -3439,14 +3742,18 @@ function getLastSessionDataForExercise(exId, templateId) {
       var workSets = e.sets.filter(function(st){ return st.type !== 'warmup'; });
       var setsToUse = workSets.length ? workSets : e.sets;
       var maxW = Math.max.apply(null, setsToUse.map(function(st){ return st.weight||0; }));
-      var lastSet = setsToUse[setsToUse.length-1];
+      // 7.9: peso e ripetizioni devono venire dalla stessa serie. Prima si
+      // prendeva il peso massimo e le ripetizioni dell'ultima serie: con
+      // 62,5×8 poi 60×7 la volta dopo ripartiva da 62,5×7.
+      var topSets = setsToUse.filter(function(st){ return Math.abs((st.weight||0)-maxW) <= WEIGHT_STEP/2; });
+      var refSet = topSets.length ? topSets[topSets.length-1] : setsToUse[setsToUse.length-1];
       var rest = (e.config && e.config.rest) ? e.config.rest : 120;
       return {
         sets: setsToUse.length,
-        reps: lastSet.reps || 10,
+        reps: refSet.reps || 10,
         weight: maxW,
-        distance: lastSet.distance || 0,
-        duration: lastSet.duration || 0,
+        distance: refSet.distance || 0,
+        duration: refSet.duration || 0,
         rest: rest,
         increments: e.increments || {weight:0,sets:0,reps:0,distance:0}
       };
@@ -4356,7 +4663,7 @@ function confirmDeleteSession() {
 // ============================================================
 // PROFILO
 // ============================================================
-var APP_VERSION = '4.6.0';
+var APP_VERSION = '4.7.0';
 function renderAppDiag() {
   var el = document.getElementById('app-diag');
   var verEl = document.getElementById('app-version');
